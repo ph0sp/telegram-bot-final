@@ -50,9 +50,7 @@ def init_db():
                   username TEXT,
                   first_name TEXT,
                   status TEXT,
-                  tariff TEXT,
-                  payment_date TEXT,
-                  expiry_date TEXT)''')
+                  registration_date TEXT)''')
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
@@ -61,7 +59,7 @@ def init_db():
 init_db()
 
 # Определяем состояния диалога
-GENDER, FIRST_QUESTION, PAYMENT, ACTIVATION = range(4)
+GENDER, FIRST_QUESTION = range(2)
 
 # Список вопросов (ПОЛНЫЙ - все 27 вопросов)
 questions = [
@@ -81,7 +79,7 @@ questions = [
     "Есть ли у вас ограничения по здоровью, которые нужно учитывать при планировании нагрузок?",
     "Блок 4: Питание и вода\n\nКак обычно выглядит ваш режим питания? (полноценные приемы пищи, перекусы на бегу, пропуск завтрака/ужина)",
     "Сколько стаканов воды вы примерно выпиваете за день?",
-    "Хотели бы вы что-то изменить в своем питании? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
+    "Хотели бы вы что-то изменить в своем питание? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
     "Сколько времени вы обычно выделяете на приготовление еды?",
     "Хорошо, переходим к следующему блоку.\n\nБлок 5: Отдых и восстановление (критически важно во избежание выгорания)\n\nЧто помогает вам по-настоящему расслабиться и восстановить силы? (чтение, прогулка, хобби, музыка, медитация, общение с близких, полное ничегонеделание)",
     "Как часто вам удается выделять время на эти занятия?",
@@ -94,34 +92,29 @@ questions = [
 ]
 
 # Функции для работы с базой данных
-def save_payment_info(user_id, tariff):
-    """Сохраняет информацию об оплате в базу данных"""
+def save_user_info(user_id, username, first_name):
+    """Сохраняет информацию о пользователе в базу данных"""
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
-    payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    expiry_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    registration_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     c.execute('''INSERT OR REPLACE INTO clients 
-                 (user_id, status, tariff, payment_date, expiry_date) 
+                 (user_id, username, first_name, status, registration_date) 
                  VALUES (?, ?, ?, ?, ?)''',
-              (user_id, 'active', tariff, payment_date, expiry_date))
+              (user_id, username, first_name, 'active', registration_date))
     conn.commit()
     conn.close()
-    logger.info(f"Сохранена информация об оплате для пользователя {user_id}")
+    logger.info(f"Сохранена информация о пользователе {user_id}")
 
-def check_payment_status(user_id):
-    """Проверяет активна ли подписка пользователя"""
+def check_user_status(user_id):
+    """Проверяет зарегистрирован ли пользователь"""
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
-    c.execute("SELECT expiry_date FROM clients WHERE user_id = ?", (user_id,))
+    c.execute("SELECT user_id FROM clients WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
     
-    if not result:
-        return False
-    
-    expiry_date = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
-    return datetime.now() < expiry_date
+    return result is not None
 
 # Функция для отправки ежедневных уведомлений
 async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
@@ -150,11 +143,10 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     user_id = user.id
     
-    # Проверяем статус подписки пользователя
-    if not check_payment_status(user_id):
+    # Проверяем статус пользователя
+    if not check_user_status(user_id):
         await update.message.reply_text(
-            "🔒 Для доступа к персональному ассистенту необходимо оформить подписку: /pay\n\n"
-            "После оплаты вы получите полный доступ ко всем функциям ассистента."
+            "Для начала работы с ботом отправьте команду /start"
         )
         return
     
@@ -187,11 +179,15 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
+    user = update.effective_user
     
-    # Проверяем, есть ли у пользователя активная подписка
-    if check_payment_status(user_id):
+    # Сохраняем информацию о пользователе
+    save_user_info(user_id, user.username, user.first_name)
+    
+    # Проверяем, завершил ли пользователь анкету
+    if check_user_status(user_id):
         await update.message.reply_text(
-            "✅ У вас есть активная подписка!\n\n"
+            "✅ Добро пожаловать обратно!\n\n"
             "Доступные команды:\n"
             "/plan - Ваш план на сегодня\n"
             "/progress - Статистика прогресса\n"
@@ -292,74 +288,26 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"Ошибка отправки кнопки ответа: {e}")
     
-    # Отправляем сообщение пользователю с предложением оплатить
+    # Отправляем сообщение пользователю
     await update.message.reply_text(
         "Спасибо за ответы!\n\n"
         "Я передал всю информацию нашему специалисту. В течение часа он проанализирует ваши данные и составит для вас индивидуальный план.\n\n"
-        "Чтобы получить доступ к вашему персональному плану и начать работу с ассистентом, необходимо оформить подписку: /pay"
+        "Теперь у вас есть доступ к персональному ассистенту.\n\n"
+        "Доступные команды:\n"
+        "/plan - Ваш план на сегодня\n"
+        "/progress - Статистика прогресса\n"
+        "/chat - Связь с ассистентом\n"
+        "/help - Помощь"
     )
     
     return ConversationHandler.END
-
-# Новые функции для системы оплаты и подписки
-async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /pay - показывает тарифы"""
-    keyboard = [
-        [InlineKeyboardButton("Месяц - 5 900 руб.", callback_data="pay_month")],
-        [InlineKeyboardButton("3 месяца - 15 000 руб.", callback_data="pay_3months")],
-        [InlineKeyboardButton("Тестовый день за 1 руб.", callback_data="pay_test")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "💰 Выберите тариф подписки:\n\n"
-        "• Месяц - 5 900 руб. (полный доступ ко всем функциям)\n"
-        "• 3 месяца - 15 000 руб. (экономия 2 700 руб.)\n"
-        "• Тестовый день - 1 руб. (ознакомительный доступ)\n\n"
-        "После оплаты вы получите:\n"
-        "✅ Персональный план на основе ваших целей\n"
-        "✅ Ежедневное сопровождение ассистента\n"
-        "✅ Еженедельные корректировки плана\n"
-        "✅ Доступ ко всем инструментам планирования",
-        reply_markup=reply_markup
-    )
-
-async def handle_payment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора тарифа оплаты"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    tariff = query.data
-    
-    # Сохраняем информацию об оплате в базу данных
-    save_payment_info(user_id, tariff)
-    
-    # Определяем название тарифа для сообщения пользователю
-    tariff_names = {
-        "pay_month": "месячная подписка",
-        "pay_3months": "подписка на 3 месяца", 
-        "pay_test": "тестовый день"
-    }
-    
-    tariff_name = tariff_names.get(tariff, "подписка")
-    
-    await query.edit_message_text(
-        text=f"✅ Оплата прошла успешно! Активна {tariff_name}.\n\n"
-             f"Теперь у вас есть доступ к персональному ассистенту.\n\n"
-             f"Доступные команды:\n"
-             f"/plan - Ваш план на сегодня\n"
-             f"/progress - Статистика прогресса\n"
-             f"/chat - Связь с ассистентом\n"
-             f"/help - Помощь"
-    )
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
     user_id = update.effective_user.id
     
-    if not check_payment_status(user_id):
-        await update.message.reply_text("❌ Доступ закрыт. Оформите подписку /pay")
+    if not check_user_status(user_id):
+        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
         return
     
     # Здесь будет логика получения плана из базы данных
@@ -378,8 +326,8 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику прогресса"""
     user_id = update.effective_user.id
     
-    if not check_payment_status(user_id):
-        await update.message.reply_text("❌ Доступ закрыт. Оформите подписку /pay")
+    if not check_user_status(user_id):
+        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
         return
     
     await update.message.reply_text(
@@ -395,8 +343,8 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает чат с ассистентом"""
     user_id = update.effective_user.id
     
-    if not check_payment_status(user_id):
-        await update.message.reply_text("❌ Доступ закрыт. Оформите подписку /pay")
+    if not check_user_status(user_id):
+        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
         return
     
     await update.message.reply_text(
@@ -409,7 +357,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ℹ️ Доступные команды:\n\n"
         "/start - Начать работу с ботом\n"
-        "/pay - Выбрать тариф и оплатить подписку\n"
         "/plan - Посмотреть ваш план на сегодня\n"
         "/progress - Статистика вашего прогресса\n"
         "/chat - Связаться с ассистентом\n"
@@ -432,27 +379,13 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT COUNT(*) FROM clients")
     total_count = c.fetchone()[0]
     
-    c.execute("SELECT COUNT(*) FROM clients WHERE tariff = 'pay_month'")
-    month_count = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM clients WHERE tariff = 'pay_3months'")
-    months3_count = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM clients WHERE tariff = 'pay_test'")
-    test_count = c.fetchone()[0]
-    
     conn.close()
     
     await update.message.reply_text(
         f"📊 Статистика бота:\n\n"
-        f"Активных подписок: {active_count}\n"
-        f"Всего клиентов: {total_count}\n\n"
-        f"По тарифам:\n"
-        f"• Месяц: {month_count}\n"
-        f"• 3 месяца: {months3_count}\n"
-        f"• Тестовый: {test_count}\n\n"
-        f"Доход в месяц: {active_count * 5900} руб.\n"
-        f"Прогнозируемый годовой доход: {active_count * 5900 * 12} руб."
+        f"Активных пользователей: {active_count}\n"
+        f"Всего зарегистрировано: {total_count}\n\n"
+        f"Бот работает в тестовом режиме без оплаты"
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,8 +398,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             text=f"Чтобы ответить пользователю {user_id}, используйте команду:\n/send {user_id} ваш текст"
         )
-    elif query.data.startswith('pay_'):
-        await handle_payment_choice(update, context)
 
 async def send_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, что команду отправляет администратор
@@ -514,8 +445,7 @@ def main():
 
         application.add_handler(conv_handler)
         
-        # Добавляем обработчики для новых команд
-        application.add_handler(CommandHandler("pay", pay_command))
+        # Добавляем обработчики для команд
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("chat", chat_command))
