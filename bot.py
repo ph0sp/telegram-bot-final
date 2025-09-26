@@ -1,8 +1,7 @@
 import os
 import logging
-import asyncio
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -13,8 +12,6 @@ from telegram.ext import (
     ConversationHandler,
     CallbackQueryHandler
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 from dotenv import load_dotenv
 load_dotenv()  # Загружает переменные из .env файла
@@ -74,7 +71,7 @@ questions = [
     "Сколько часов в день вы готовы посвящать работе над этой целью? (Важно оценить ресурсы честно)",
     "Есть ли у вас дедлайн или ключевые точки контроля на этом пути?\n\nКак только вы ответите, мы перейдем к следующему блоку вопросов, чтобы понять текущий ритм жизни и выстроить план, который будет работать именно для вас.",
     "Отлично, основа понятна. Теперь давайте перейдем к вашему текущему ритму жизни, чтобы вписать эту цель в ваш день комфортно и без выгорания. \n\nБлок 2: Текущий распорядок и ресурсы\n\nВо сколько вы обычно просыпаетесь и ложитесь спать?",
-    "Опишите кратко, как обычно выглядит ваш текущий день (работа, учеба, обязанities)?",
+    "Опишите кратко, как обычно выглядит ваш текущий день (работа, учеба, обязанности)?",
     "В какое время суток вы чувствуете себя наиболее энергичным и продуктивным? (утро, день, вечер)",
     "Сколько часов в день вы обычно тратите на соцсети, просмотр сериалов и другие не основные занятия?",
     "Как часто вы чувствуете себя перегруженным или близким к выгоранию?\n\nКак только вы ответите на эти вопросы, мы перейдем к следующим блокам (спорт, питание, отдых), чтобы сделать план по-настоящему сбалансированным. ",
@@ -320,7 +317,7 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Месяц - 5 900 руб. (полный доступ ко всем функциям)\n"
         "• 3 месяца - 15 000 руб. (экономия 2 700 руб.)\n"
         "• Тестовый день - 1 руб. (ознакомительный доступ)\n\n"
-        "После оплата вы получите:\n"
+        "После оплаты вы получите:\n"
         "✅ Персональный план на основе ваших целей\n"
         "✅ Ежедневное сопровождение ассистента\n"
         "✅ Еженедельные корректировки плана\n"
@@ -533,14 +530,13 @@ def main():
         # Добавляем обработчик для всех сообщений (после остальных обработчиков)
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
-        # Настраиваем планировщик для ежедневных уведомлений
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(send_daily_plan, CronTrigger(hour=9, minute=0), args=[application])
+        # Настраиваем планировщик для ежедневных уведомлений с помощью JobQueue
+        job_queue = application.job_queue
+        
+        # Добавляем ежедневную задачу на 9:00 утра
+        job_queue.run_daily(send_daily_plan, time=time(hour=9, minute=0), days=(0, 1, 2, 3, 4, 5, 6))
 
         logger.info("Бот запускается...")
-        
-        # Запускаем планировщик и бота в правильном порядке
-        scheduler.start()
         application.run_polling()
         
     except Exception as e:
