@@ -534,12 +534,14 @@ def main():
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
         # Настраиваем планировщик для ежедневных уведомлений
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(send_daily_plan, CronTrigger(hour=9, minute=0), args=[application])
-        scheduler.start()
-        
-        logger.info("Бот запускается...")
-        application.run_polling()
+scheduler = AsyncIOScheduler()
+scheduler.add_job(send_daily_plan, CronTrigger(hour=9, minute=0), args=[application])
+
+logger.info("Бот запускается...")
+
+# Запускаем планировщик и бота в правильном порядке
+scheduler.start()
+application.run_polling()
         
     except Exception as e:
         logger.error(f"Ошибка запуска бота: {e}")
