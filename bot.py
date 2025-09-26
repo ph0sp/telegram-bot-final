@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime, timedelta, time
+from datetime import datetime, time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 from dotenv import load_dotenv
-load_dotenv()  # Загружает переменные из .env файла
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -49,19 +49,18 @@ def init_db():
                  (user_id INTEGER PRIMARY KEY, 
                   username TEXT,
                   first_name TEXT,
-                  status TEXT,
+                  status TEXT DEFAULT 'active',
                   registration_date TEXT)''')
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
 
-# Вызываем инициализацию базы данных при запуске
 init_db()
 
 # Определяем состояния диалога
 GENDER, FIRST_QUESTION = range(2)
 
-# Список вопросов (ПОЛНЫЙ - все 27 вопросов)
+# Список вопросов (полная версия)
 questions = [
     "Готовы начать?",
     "Давайте начнем!\nПоследовательно отвечайте на вопросы в свободной форме, как вам удобно.\n\nНачнем с самого главного\n\nБлок 1: Цель и главный фокус\n\nКакая ваша главная цель на ближайший месяц? (например, запуск проекта, подготовка к экзамену, улучшение физической формы, обучение новому навыку)\n\nЖду вашего ответа, чтобы двигаться дальше.",
@@ -79,7 +78,7 @@ questions = [
     "Есть ли у вас ограничения по здоровью, которые нужно учитывать при планировании нагрузок?",
     "Блок 4: Питание и вода\n\nКак обычно выглядит ваш режим питания? (полноценные приемы пищи, перекусы на бегу, пропуск завтрака/ужина)",
     "Сколько стаканов воды вы примерно выпиваете за день?",
-    "Хотели бы вы что-то изменить в своем питание? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
+    "Хотели бы вы что-то изменить в своем питании? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
     "Сколько времени вы обычно выделяете на приготовление еды?",
     "Хорошо, переходим к следующему блоку.\n\nБлок 5: Отдых и восстановление (критически важно во избежание выгорания)\n\nЧто помогает вам по-настоящему расслабиться и восстановить силы? (чтение, прогулка, хобби, музыка, медитация, общение с близких, полное ничегонеделание)",
     "Как часто вам удается выделять время на эти занятия?",
@@ -91,7 +90,6 @@ questions = [
     "Как нам лучше всего предусмотреть дни непредвиденных обстоятельств или дни с низкой энергией? (Например, запланировать 1-2 таких дня в неделю)"
 ]
 
-# Функции для работы с базой данных
 def save_user_info(user_id, username, first_name):
     """Сохраняет информацию о пользователе в базу данных"""
     conn = sqlite3.connect('clients.db')
@@ -106,19 +104,18 @@ def save_user_info(user_id, username, first_name):
     conn.close()
     logger.info(f"Сохранена информация о пользователе {user_id}")
 
-def check_user_status(user_id):
+def check_user_registered(user_id):
     """Проверяет зарегистрирован ли пользователь"""
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
     c.execute("SELECT user_id FROM clients WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-    
     return result is not None
 
 # Функция для отправки ежедневных уведомлений
 async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет ежедневный план всем активным пользователям"""
+    """Отправляет ежедневный план всем зарегистрированным пользователям"""
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
     c.execute("SELECT user_id FROM clients WHERE status = 'active'")
@@ -136,21 +133,21 @@ async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
 
 # Обработчик для всех входящих сообщений
 async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Пропускаем команды и сообщения, которые уже обрабатываются ConversationHandler
+    # Пропускаем команды
     if update.message.text and update.message.text.startswith('/'):
         return
     
     user = update.effective_user
     user_id = user.id
     
-    # Проверяем статус пользователя
-    if not check_user_status(user_id):
+    # Если пользователь не зарегистрирован, предлагаем начать
+    if not check_user_registered(user_id):
         await update.message.reply_text(
-            "Для начала работы с ботом отправьте команду /start"
+            "👋 Для начала работы с персональным ассистентом отправьте команду /start"
         )
         return
     
-    message_text = update.message.text or "Сообщение без текста (возможно, медиафайл)"
+    message_text = update.message.text or "Сообщение без текста"
     
     # Формируем сообщение для администратора
     user_info = f"Сообщение от пользователя:\n"
@@ -178,21 +175,22 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Ошибка отправки сообщения администратору: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
     user = update.effective_user
+    user_id = user.id
     
-    # Сохраняем информацию о пользователе
+    # Сохраняем пользователя в базу
     save_user_info(user_id, user.username, user.first_name)
     
-    # Проверяем, завершил ли пользователь анкету
-    if check_user_status(user_id):
+    # Проверяем, заполнял ли пользователь уже анкету
+    if check_user_registered(user_id):
         await update.message.reply_text(
-            "✅ Добро пожаловать обратно!\n\n"
+            "✅ Вы уже зарегистрированы!\n\n"
             "Доступные команды:\n"
             "/plan - Ваш план на сегодня\n"
             "/progress - Статистика прогресса\n"
             "/chat - Связь с ассистентом\n"
-            "/help - Помощь"
+            "/help - Помощь\n"
+            "/questionnaire - Заполнить анкету заново"
         )
         return ConversationHandler.END
     
@@ -261,7 +259,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         questionnaire += f"{i}. {question}:\n{context.user_data['answers'].get(i, 'Нет ответа')}\n\n"
     
     # Разбиваем анкету на части, если она слишком длинная
-    max_length = 4096  # Максимальная длина сообщения в Telegram
+    max_length = 4096
     if len(questionnaire) > max_length:
         parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
         for part in parts:
@@ -292,7 +290,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(
         "Спасибо за ответы!\n\n"
         "Я передал всю информацию нашему специалисту. В течение часа он проанализирует ваши данные и составит для вас индивидуальный план.\n\n"
-        "Теперь у вас есть доступ к персональному ассистенту.\n\n"
+        "Теперь у вас есть доступ к персональному ассистенту!\n\n"
         "Доступные команды:\n"
         "/plan - Ваш план на сегодня\n"
         "/progress - Статистика прогресса\n"
@@ -306,12 +304,10 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
     user_id = update.effective_user.id
     
-    if not check_user_status(user_id):
-        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
+    if not check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    # Здесь будет логика получения плана из базы данных
-    # Пока используем заглушку
     await update.message.reply_text(
         "📋 Ваш план на сегодня:\n\n"
         "1. Работа над проектом - 3 часа\n"
@@ -326,8 +322,8 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику прогресса"""
     user_id = update.effective_user.id
     
-    if not check_user_status(user_id):
-        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
+    if not check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     await update.message.reply_text(
@@ -343,8 +339,8 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает чат с ассистентом"""
     user_id = update.effective_user.id
     
-    if not check_user_status(user_id):
-        await update.message.reply_text("❌ Для доступа к функциям бота отправьте /start")
+    if not check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     await update.message.reply_text(
@@ -356,13 +352,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
     await update.message.reply_text(
         "ℹ️ Доступные команды:\n\n"
-        "/start - Начать работу с ботом\n"
+        "/start - Начать работу с ботом (заполнить анкету)\n"
         "/plan - Посмотреть ваш план на сегодня\n"
         "/progress - Статистика вашего прогресса\n"
         "/chat - Связаться с ассистентом\n"
         "/help - Эта справка\n\n"
         "По всем вопросам обращайтесь к вашему ассистенту через команду /chat"
     )
+
+async def questionnaire_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает анкету заново"""
+    user_id = update.effective_user.id
+    
+    # Сбрасываем состояние анкеты
+    context.user_data.clear()
+    
+    keyboard = [['Мужской', 'Женский']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    
+    await update.message.reply_text(
+        'Выберите пол ассистента:',
+        reply_markup=reply_markup
+    )
+    
+    return GENDER
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика для администратора"""
@@ -373,9 +386,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
     
-    c.execute("SELECT COUNT(*) FROM clients WHERE status = 'active'")
-    active_count = c.fetchone()[0]
-    
     c.execute("SELECT COUNT(*) FROM clients")
     total_count = c.fetchone()[0]
     
@@ -383,9 +393,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"📊 Статистика бота:\n\n"
-        f"Активных пользователей: {active_count}\n"
-        f"Всего зарегистрировано: {total_count}\n\n"
-        f"Бот работает в тестовом режиме без оплаты"
+        f"Всего зарегистрированных пользователей: {total_count}\n"
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -452,17 +460,16 @@ def main():
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("stats", admin_stats))
         application.add_handler(CommandHandler("send", send_to_user))
+        application.add_handler(CommandHandler("questionnaire", questionnaire_command))
         
         # Добавляем обработчик для callback кнопок
         application.add_handler(CallbackQueryHandler(button_callback))
         
-        # Добавляем обработчик для всех сообщений (после остальных обработчиков)
+        # Добавляем обработчик для всех сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
-        # Настраиваем планировщик для ежедневных уведомлений с помощью JobQueue
+        # Настраиваем планировщик для ежедневных уведомлений
         job_queue = application.job_queue
-        
-        # Добавляем ежедневную задачу на 9:00 утра
         job_queue.run_daily(send_daily_plan, time=time(hour=9, minute=0), days=(0, 1, 2, 3, 4, 5, 6))
 
         logger.info("Бот запускается...")
