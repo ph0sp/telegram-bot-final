@@ -4,11 +4,11 @@ import sqlite3
 from datetime import datetime, time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    Updater,  # Изменено с Application на Updater для версии 13.15
     CommandHandler,
     MessageHandler,
-    filters,
-    ContextTypes,
+    Filters,  # Изменено с filters на Filters
+    CallbackContext,  # Изменено с ContextTypes.DEFAULT_TYPE на CallbackContext
     ConversationHandler,
     CallbackQueryHandler,
     JobQueue
@@ -777,53 +777,52 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 def main():
-    """Основная функция запуска бота"""
+      """Основная функция запуска бота"""
     try:
-        # Создание Application с JobQueue
-        application = Application.builder().token(TOKEN).build()
+        # Создание Updater для версии 13.15
+        updater = Updater(TOKEN, use_context=True)
+        dispatcher = updater.dispatcher
+        job_queue = updater.job_queue
 
         # Настройка обработчика диалога
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
-                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
-                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
+                GENDER: [MessageHandler(Filters.regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                FIRST_QUESTION: [MessageHandler(Filters.text & ~Filters.command, handle_question)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
 
-        application.add_handler(conv_handler)
+        dispatcher.add_handler(conv_handler)
         
         # Добавляем обработчики для команд
-        application.add_handler(CommandHandler("plan", plan_command))
-        application.add_handler(CommandHandler("progress", progress_command))
-        application.add_handler(CommandHandler("profile", profile_command))
-        application.add_handler(CommandHandler("chat", chat_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("stats", admin_stats))
-        application.add_handler(CommandHandler("send", send_to_user))
-        application.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
-        application.add_handler(CommandHandler("questionnaire", questionnaire_command))
+        dispatcher.add_handler(CommandHandler("plan", plan_command))
+        dispatcher.add_handler(CommandHandler("progress", progress_command))
+        dispatcher.add_handler(CommandHandler("profile", profile_command))
+        dispatcher.add_handler(CommandHandler("chat", chat_command))
+        dispatcher.add_handler(CommandHandler("help", help_command))
+        dispatcher.add_handler(CommandHandler("stats", admin_stats))
+        dispatcher.add_handler(CommandHandler("send", send_to_user))
+        dispatcher.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
+        dispatcher.add_handler(CommandHandler("questionnaire", questionnaire_command))
         
         # Добавляем обработчик для callback кнопок
-        application.add_handler(CallbackQueryHandler(button_callback))
+        dispatcher.add_handler(CallbackQueryHandler(button_callback))
         
         # Добавляем обработчик для всех сообщений
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
+        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_all_messages))
         
         # Настраиваем планировщик для ежедневных уведомлений
-        job_queue = application.job_queue
         if job_queue:
             job_queue.run_daily(send_daily_plan, time=time(hour=9, minute=0), days=(0, 1, 2, 3, 4, 5, 6))
             logger.info("✅ JobQueue настроен для ежедневных уведомлений")
         else:
             logger.warning("⚠️ JobQueue не доступен")
 
-        logger.info("🤖 Бот запускается...")
-        application.run_polling(drop_pending_updates=True)
+        logger.info("🤖 Бот запускается на Render Starter Plan...")
+        updater.start_polling()
+        updater.idle()
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
-
-if __name__ == '__main__':
-    main()
