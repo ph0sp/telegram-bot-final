@@ -4,11 +4,11 @@ import sqlite3
 from datetime import datetime, time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater,  # Изменено с Application на Updater для версии 13.15
+    Application,
     CommandHandler,
     MessageHandler,
-    Filters,  # Изменено с filters на Filters
-    CallbackContext,  # Изменено с ContextTypes.DEFAULT_TYPE на CallbackContext
+    filters,
+    ContextTypes,
     ConversationHandler,
     CallbackQueryHandler,
     JobQueue
@@ -67,7 +67,7 @@ def init_db():
                   answer_date TEXT,
                   FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
     
-    # Таблица сообщений - УБРАНЫ КОММЕНТАРИИ ИЗ SQL!
+    # Таблица сообщений
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
@@ -104,7 +104,7 @@ questions = [
     "Блок 4: Питание и вода\n\nКак обычно выглядит ваш режим питания? (полноценные приемы пищи, перекусы на бегу, пропуск завтрака/ужина)",
     "Сколько стаканов воды вы примерно выпиваете за день?",
     "Хотели бы вы что-то изменить в своем питании? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
-    "Сколько времени вы обычно выделяете на приготовление еды?",
+    "Сколько времени вы обычно выделяете на приготовление еда?",
     "Хорошо, переходим к следующему блоку.\n\nБлок 5: Отдых и восстановление (критически важно во избежание выгорания)\n\nЧто помогает вам по-настоящему расслабиться и восстановить силы? (чтение, прогулка, хобби, музыка, медитация, общение с близких, полное ничегонеделание)",
     "Как часто вам удается выделять время на эти занятия?",
     "Планируете ли вы выходные дни или микро-перерывы в течение дня?",
@@ -282,7 +282,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     update_user_activity(user_id)
     
     # Проверяем, заполнял ли пользователь уже анкету
-    if check_user_registered(user_id):
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = ?", (user_id,))
+    has_answers = c.fetchone()[0] > 0
+    conn.close()
+    
+    if has_answers:
         await update.message.reply_text(
             "✅ Вы уже зарегистрированы!\n\n"
             "📋 Доступные команды:\n"
@@ -384,12 +390,12 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
         for part in parts:
             try:
-                await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=part, parse_mode='HTML')
+                await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=part)
             except Exception as e:
                 logger.error(f"Ошибка отправки части анкеты: {e}")
     else:
         try:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=questionnaire, parse_mode='HTML')
+            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=questionnaire)
         except Exception as e:
             logger.error(f"Ошибка отправки анкеты: {e}")
     
@@ -712,30 +718,30 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = context.args[0]
     
     try:
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
+        with sqlite3.connect('clients.db') as conn:
+            c = conn.cursor()
+            
+            # Получаем информацию о пользователе
+            c.execute("SELECT first_name, last_name, username FROM clients WHERE user_id = ?", (user_id,))
+            user_data = c.fetchone()
+            
+            if not user_data:
+                await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден.")
+                return
+            
+            first_name, last_name, username = user_data
+            
+            # Получаем ответы на анкету
+            c.execute('''SELECT question_number, question_text, answer_text, answer_date 
+                         FROM questionnaire_answers 
+                         WHERE user_id = ? 
+                         ORDER BY question_number''', (user_id,))
+            answers = c.fetchall()
         
-        # Получаем информацию о пользователе
-        c.execute("SELECT first_name, last_name, username FROM clients WHERE user_id = ?", (user_id,))
-        user_data = c.fetchone()
-        
-        if not user_data:
-            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден.")
-            return
-        
-        first_name, last_name, username = user_data
-        
-        # Получаем ответы на анкету
-        c.execute('''SELECT question_number, question_text, answer_text, answer_date 
-                     FROM questionnaire_answers 
-                     WHERE user_id = ? 
-                     ORDER BY question_number''', (user_id,))
-        answers = c.fetchall()
-        
-        conn.close()
-        
-        if not answers:
-            await update.message.reply_text(f"❌ Пользователь {first_name} еще не заполнял анкету.")
+        # Фильтруем ответы, убирая вопрос №0
+        visible_answers = [a for a in answers if a[0] != 0]
+        if not visible_answers:
+            await update.message.reply_text(f"❌ Пользователь {first_name} еще не заполнял анкету или нет видимых ответов.")
             return
         
         # Формируем анкету
@@ -748,10 +754,8 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
         questionnaire += f"🆔 ID: {user_id}\n\n"
         questionnaire += "📝 Ответы:\n\n"
         
-        for answer in answers:
+        for answer in visible_answers:
             question_num, question_text, answer_text, answer_date = answer
-            if question_num == 0:  # Пропускаем первый вопрос
-                continue
             questionnaire += f"❓ {question_num}. {question_text}:\n"
             questionnaire += f"💬 {answer_text}\n"
             questionnaire += f"🕐 {answer_date}\n\n"
@@ -767,7 +771,7 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка получения анкеты: {e}")
-        logger.error(f"Ошибка получения анкеты пользователя {user_id}: {e}")
+        logger.exception(f"Ошибка получения анкеты пользователя {user_id}")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -777,52 +781,53 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 def main():
-      """Основная функция запуска бота"""
+    """Основная функция запуска бота"""
     try:
-        # Создание Updater для версии 13.15
-        updater = Updater(TOKEN, use_context=True)
-        dispatcher = updater.dispatcher
-        job_queue = updater.job_queue
+        # Создание Application с JobQueue
+        application = Application.builder().token(TOKEN).build()
 
         # Настройка обработчика диалога
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
-                GENDER: [MessageHandler(Filters.regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
-                FIRST_QUESTION: [MessageHandler(Filters.text & ~Filters.command, handle_question)],
+                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
 
-        dispatcher.add_handler(conv_handler)
+        application.add_handler(conv_handler)
         
         # Добавляем обработчики для команд
-        dispatcher.add_handler(CommandHandler("plan", plan_command))
-        dispatcher.add_handler(CommandHandler("progress", progress_command))
-        dispatcher.add_handler(CommandHandler("profile", profile_command))
-        dispatcher.add_handler(CommandHandler("chat", chat_command))
-        dispatcher.add_handler(CommandHandler("help", help_command))
-        dispatcher.add_handler(CommandHandler("stats", admin_stats))
-        dispatcher.add_handler(CommandHandler("send", send_to_user))
-        dispatcher.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
-        dispatcher.add_handler(CommandHandler("questionnaire", questionnaire_command))
+        application.add_handler(CommandHandler("plan", plan_command))
+        application.add_handler(CommandHandler("progress", progress_command))
+        application.add_handler(CommandHandler("profile", profile_command))
+        application.add_handler(CommandHandler("chat", chat_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("stats", admin_stats))
+        application.add_handler(CommandHandler("send", send_to_user))
+        application.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
+        application.add_handler(CommandHandler("questionnaire", questionnaire_command))
         
         # Добавляем обработчик для callback кнопок
-        dispatcher.add_handler(CallbackQueryHandler(button_callback))
+        application.add_handler(CallbackQueryHandler(button_callback))
         
         # Добавляем обработчик для всех сообщений
-        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_all_messages))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
         # Настраиваем планировщик для ежедневных уведомлений
+        job_queue = application.job_queue
         if job_queue:
             job_queue.run_daily(send_daily_plan, time=time(hour=9, minute=0), days=(0, 1, 2, 3, 4, 5, 6))
             logger.info("✅ JobQueue настроен для ежедневных уведомлений")
         else:
             logger.warning("⚠️ JobQueue не доступен")
 
-        logger.info("🤖 Бот запускается на Render Starter Plan...")
-        updater.start_polling()
-        updater.idle()
+        logger.info("🤖 Бот запускается...")
+        application.run_polling(drop_pending_updates=True)
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
+
+if __name__ == '__main__':
+    main()
