@@ -4,18 +4,19 @@ import sqlite3
 import asyncio
 import time
 import json
-from datetime import datetime, time, timedelta
-from typing import Dict, Optional, Any
+from datetime import datetime, time as dt_time, timedelta
+from typing import Dict, Optional, Any, List
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    Updater,
     CommandHandler,
     MessageHandler,
-    filters,
-    ContextTypes,
+    Filters,
+    CallbackContext,
     ConversationHandler,
-    CallbackQueryHandler
+    CallbackQueryHandler,
+    JobQueue
 )
 
 from dotenv import load_dotenv
@@ -84,7 +85,7 @@ QUESTIONS = [
     "Блок 3: Физическая активность и спорт\n\nКакой у вас текущий уровень физической активности? (сидячий, легкие прогулки, тренировки 1-2 раза в неделю, регулярные тренировки)",
     "Каким видом спорта или физической активности вам нравится заниматься/вы бы хотели заняться? (бег, йога, плавание, тренажерный зал, домашние тренировки)",
     "Сколько дней в неделю и сколько времени вы готовы выделять на спорт? (Например, 3 раза по 45 минут)",
-    "Есть ли у вас ограничения по здоровью, которые нужно учитывать при планировании нагрузок?",
+    "Есть ли у вас ограничения по здоровью, которые нужно учитывать при планировании нагрузки?",
     "Блок 4: Питание и вода\n\nКак обычно выглядит ваш режим питания? (полноценные приемы пищи, перекусы на бегу, пропуск завтрака/ужина)",
     "Сколько стаканов воды вы примерно выпиваете за день?",
     "Хотели бы вы что-то изменить в своем питании? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
@@ -93,7 +94,7 @@ QUESTIONS = [
     "Как часто вам удается выделять время на эти занятия?",
     "Планируете ли вы выходные дни или микро-перерывы в течение дня?",
     "Важно ли для вас время на общение с семьей/друзьями? Сколько раз в неделю вы бы хотели это видеть в своем плане?",
-    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режима, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалах вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
+    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режима, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалов вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
     "Отлично, остался заключительный блок.\n\nБлок 7: Финальные Уточнения и Гибкость\n\nКакой ваш идеальный баланс между продуктивностью и отдыхом? (например, 70/30, 60/40)",
     "Что чаще всего мешает вам следовать планам? (неожиданные дела, лень, отсутствие мотивации)",
     "Как нам лучше всего предусмотреть дни непредвиденных обстоятельств или дни с низкой энергией? (Например, запланировать 1-2 таких дня в неделю)"
@@ -580,8 +581,8 @@ sheets_manager = GoogleSheetsManager()
 # ========== СИСТЕМА НАПОМИНАНИЙ ==========
 
 class SmartReminderSystem:
-    def __init__(self, application):
-        self.application = application
+    def __init__(self, updater):
+        self.updater = updater
         self.reminder_settings = {}
         self.active_reminders = {}
     
@@ -646,7 +647,7 @@ class SmartReminderSystem:
         conn.commit()
         conn.close()
     
-    async def setup_reminders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def setup_reminders(self, update: Update, context: CallbackContext):
         """Настройка автоматических напоминаний"""
         user_id = update.effective_user.id
         
@@ -655,7 +656,7 @@ class SmartReminderSystem:
         context.user_data['reminder_settings'] = settings
         context.user_data['reminder_setup_step'] = 0
         
-        await update.message.reply_text(
+        update.message.reply_text(
             "🔔 Давайте настроим автоматические напоминания!\n\n"
             "Я могу напоминать вам о важных вещах в течение дня. "
             "Выберите, о чем вам нужно напоминать:\n\n"
@@ -672,7 +673,7 @@ class SmartReminderSystem:
         
         return "REMINDER_SETUP"
     
-    async def handle_reminder_setup(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def handle_reminder_setup(self, update: Update, context: CallbackContext):
         """Обрабатывает ответы при настройке напоминаний"""
         user_id = update.effective_user.id
         user_response = update.message.text.lower()
@@ -700,33 +701,33 @@ class SmartReminderSystem:
                 settings[current_type] = False
                 response = "❌ Хорошо, не буду напоминать."
             else:
-                await update.message.reply_text("Пожалуйста, ответьте 'да' или 'нет'")
+                update.message.reply_text("Пожалуйста, ответьте 'да' или 'нет'")
                 return "REMINDER_SETUP"
             
             context.user_data['reminder_setup_step'] += 1
             
             if step + 1 < len(reminder_types):
                 next_type, next_text, after_text = reminder_types[step + 1]
-                await update.message.reply_text(
+                update.message.reply_text(
                     f"{response}\n\nНужны ли вам напоминания о {after_text}"
                 )
             else:
                 # Сохраняем настройки
                 self.save_user_settings(user_id, settings)
-                await self.schedule_reminders(user_id, settings)
+                self.schedule_reminders(user_id, settings)
                 
                 enabled_reminders = [rt[1] for rt in reminder_types if settings[rt[0]]]
                 
                 if enabled_reminders:
                     reminders_text = "\n".join([f"• {reminder}" for reminder in enabled_reminders])
-                    await update.message.reply_text(
+                    update.message.reply_text(
                         f"🎉 Напоминания настроены!\n\n"
                         f"Я буду напоминать вам о:\n{reminders_text}\n\n"
                         f"Вы всегда можете изменить настройки: /reminder_settings\n"
                         f"Или установить разовое напоминание: /remind"
                     )
                 else:
-                    await update.message.reply_text(
+                    update.message.reply_text(
                         "❌ Автоматические напоминания отключены.\n\n"
                         "Вы можете установить разовое напоминание: /remind\n"
                         "Или настроить автоматические позже: /reminder_settings"
@@ -736,7 +737,7 @@ class SmartReminderSystem:
         
         return "REMINDER_SETUP"
     
-    async def schedule_reminders(self, user_id: int, settings: Dict[str, bool]):
+    def schedule_reminders(self, user_id: int, settings: Dict[str, bool]):
         """Планирует автоматические напоминания"""
         reminder_times = {
             'morning_rituals': [(8, 0)],  # 8:00
@@ -762,7 +763,7 @@ class SmartReminderSystem:
         for job_name in list(self.active_reminders.keys()):
             if job_name.startswith(f"auto_{user_id}_"):
                 try:
-                    job = self.application.job_queue.get_jobs_by_name(job_name)
+                    job = self.updater.job_queue.get_jobs_by_name(job_name)
                     if job:
                         job[0].schedule_removal()
                     del self.active_reminders[job_name]
@@ -778,9 +779,9 @@ class SmartReminderSystem:
                     job_name = f"auto_{user_id}_{reminder_type}_{hour}_{minute}"
                     
                     try:
-                        self.application.job_queue.run_daily(
+                        self.updater.job_queue.run_daily(
                             callback=lambda ctx, uid=user_id, text=reminder_texts[reminder_type]: self.send_auto_reminder(ctx, uid, text),
-                            time=time(hour=hour-3, minute=minute),  # UTC+3
+                            time=dt_time(hour=hour-3, minute=minute),  # UTC+3
                             days=tuple(range(7)),
                             name=job_name
                         )
@@ -795,10 +796,10 @@ class SmartReminderSystem:
                     except Exception as e:
                         logger.error(f"❌ Ошибка установки автонапоминания: {e}")
     
-    async def send_auto_reminder(self, context, user_id: int, text: str):
+    def send_auto_reminder(self, context: CallbackContext, user_id: int, text: str):
         """Отправляет автоматическое напоминание"""
         try:
-            await context.bot.send_message(
+            context.bot.send_message(
                 chat_id=user_id,
                 text=f"🔔 НАПОМИНАНИЕ:\n\n{text}\n\n"
                      f"✅ Отметьте выполнение соответствующей командой"
@@ -810,7 +811,7 @@ class SmartReminderSystem:
         except Exception as e:
             logger.error(f"❌ Ошибка отправки автонапоминания: {e}")
     
-    async def set_custom_reminder(self, user_id: int, reminder_time: str, text: str) -> bool:
+    def set_custom_reminder(self, user_id: int, reminder_time: str, text: str) -> bool:
         """Устанавливает кастомное напоминание"""
         try:
             # Парсим время
@@ -834,7 +835,7 @@ class SmartReminderSystem:
             # Создаем отложенную задачу
             job_name = f"custom_{user_id}_{datetime.now().timestamp()}"
             
-            self.application.job_queue.run_once(
+            self.updater.job_queue.run_once(
                 callback=lambda ctx, uid=user_id, t=text: self.send_custom_reminder(ctx, uid, t),
                 when=delay,
                 name=job_name
@@ -854,10 +855,10 @@ class SmartReminderSystem:
             logger.error(f"❌ Ошибка установки напоминания: {e}")
             return False
     
-    async def send_custom_reminder(self, context, user_id: int, text: str):
+    def send_custom_reminder(self, context: CallbackContext, user_id: int, text: str):
         """Отправляет кастомное напоминание"""
         try:
-            await context.bot.send_message(
+            context.bot.send_message(
                 chat_id=user_id,
                 text=f"🔔 ВАШЕ НАПОМИНАНИЕ:\n\n{text}\n\n"
                      f"✅ Выполнено? /done"
@@ -870,7 +871,7 @@ reminder_system = None
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def start(update: Update, context: CallbackContext) -> int:
     """Обработчик команды /start"""
     user = update.effective_user
     user_id = user.id
@@ -891,7 +892,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         keyboard = [['⚙️ Настроить напоминания', '📋 Мой план']]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
         
-        await update.message.reply_text(
+        update.message.reply_text(
             "✅ Вы уже зарегистрированы!\n\n"
             "🔔 Хотите настроить автоматические напоминания? Это поможет вам "
             "не забывать о важных делах в течение дня.",
@@ -906,7 +907,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         keyboard = [['👨 Мужской', '👩 Женский']]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
         
-        await update.message.reply_text(
+        update.message.reply_text(
             '👋 Добро пожаловать! Я ваш персональный ассистент по продуктивности.\n\n'
             'Для начала выберите пол ассистента:',
             reply_markup=reply_markup
@@ -914,7 +915,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         return GENDER
 
-async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def gender_choice(update: Update, context: CallbackContext) -> int:
     """Обработчик выбора пола ассистента"""
     gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
     context.user_data['assistant_gender'] = gender
@@ -928,7 +929,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
-    await update.message.reply_text(
+    update.message.reply_text(
         f'👋 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент. '
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
         f'Я составлю для вас сбалансированный план на месяц, а затем мы будем ежедневно отслеживать прогресс и ваше состояние, '
@@ -941,36 +942,36 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     return FIRST_QUESTION
 
-async def save_answer(user_id: int, context, answer_text: str):
+def save_answer(user_id: int, context: CallbackContext, answer_text: str):
     """Сохраняет ответ пользователя"""
     current_question = context.user_data['current_question']
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
 
-async def process_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def process_next_question(update: Update, context: CallbackContext):
     """Обрабатывает переход к следующему вопросу"""
     context.user_data['current_question'] += 1
     if context.user_data['current_question'] < len(QUESTIONS):
-        await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
+        update.message.reply_text(QUESTIONS[context.user_data['current_question']])
 
-async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def handle_question(update: Update, context: CallbackContext) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
     
     # Сохраняем ответ
-    await save_answer(user_id, context, answer_text)
+    save_answer(user_id, context, answer_text)
     
     # Переходим к следующему вопросу
-    await process_next_question(update, context)
+    process_next_question(update, context)
     
     # Проверяем завершение анкеты
     if context.user_data['current_question'] >= len(QUESTIONS):
-        return await finish_questionnaire(update, context)
+        return finish_questionnaire(update, context)
     
     return FIRST_QUESTION
 
-async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def finish_questionnaire(update: Update, context: CallbackContext) -> int:
     """Завершает анкету и отправляет данные"""
     user = update.effective_user
     assistant_name = context.user_data['assistant_name']
@@ -1011,12 +1012,12 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
         for part in parts:
             try:
-                await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=part)
+                context.bot.send_message(chat_id=YOUR_CHAT_ID, text=part)
             except Exception as e:
                 logger.error(f"Ошибка отправки части анкеты: {e}")
     else:
         try:
-            await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=questionnaire)
+            context.bot.send_message(chat_id=YOUR_CHAT_ID, text=questionnaire)
         except Exception as e:
             logger.error(f"Ошибка отправки анкеты: {e}")
     
@@ -1029,7 +1030,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("📋 Создать план", callback_data=f"create_plan_{user.id}")]
         ])
         
-        await context.bot.send_message(
+        context.bot.send_message(
             chat_id=YOUR_CHAT_ID, 
             text=f"✅ Пользователь {user.first_name} завершил анкету!\n\n"
                  f"Чтобы ответить пользователю, используйте команду:\n"
@@ -1043,7 +1044,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Ошибка отправки кнопки ответа: {e}")
     
     # Отправляем сообщение пользователю
-    await update.message.reply_text(
+    update.message.reply_text(
         "🎉 Спасибо за ответы!\n\n"
         "✅ Я передал всю информацию нашему специалисту. В течение 24 часов он проанализирует ваши данные и составит для вас индивидуальный план.\n\n"
         "🔔 Теперь у вас есть доступ к персональному ассистенту!\n\n"
@@ -1061,16 +1062,16 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ========== СУЩЕСТВУЮЩИЕ КОМАНДЫ ==========
 
-async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def plan_command(update: Update, context: CallbackContext):
     """Показывает текущий план пользователя"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    await update.message.reply_text(
+    update.message.reply_text(
         "📋 Ваш персональный план на сегодня:\n\n"
         "🕘 Утро (8:00 - 12:00):\n"
         "• 🏃 Зарядка и контрастный душ - 20 мин\n"
@@ -1089,18 +1090,18 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎯 Если у вас есть индивидуальный план, используйте: /my_plan"
     )
 
-async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def progress_command(update: Update, context: CallbackContext):
     """Показывает статистику прогресса"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     stats = get_user_stats(user_id)
     
-    await update.message.reply_text(
+    update.message.reply_text(
         f"📊 Ваша статистика прогресса:\n\n"
         f"✅ Выполнено задач за неделю: 18/25 (72%)\n"
         f"🏃 Физическая активность: 4/5 дней\n"
@@ -1118,14 +1119,14 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/energy <1-10> - оценить энергию"
     )
 
-async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def profile_command(update: Update, context: CallbackContext):
     """Показывает профиль пользователя"""
     user = update.effective_user
     user_id = user.id
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     stats = get_user_stats(user_id)
@@ -1151,25 +1152,25 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile_text += f"/mood <1-10> - настроение\n"
     profile_text += f"/energy <1-10> - энергия"
     
-    await update.message.reply_text(profile_text)
+    update.message.reply_text(profile_text)
 
-async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def chat_command(update: Update, context: CallbackContext):
     """Начинает чат с ассистентом"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    await update.message.reply_text(
+    update.message.reply_text(
         "💬 Чат с ассистентом открыт!\n\n"
         "📝 Напишите ваш вопрос или сообщение, и ассистент ответит вам в ближайшее время.\n\n"
         "⏰ Обычно ответ занимает не более 15-30 минут в рабочее время (9:00 - 18:00).\n\n"
         "🔔 Вы также можете просто писать сообщения без команды /chat - я всегда на связи!"
     )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def help_command(update: Update, context: CallbackContext):
     """Показывает справку по командам"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
@@ -1196,9 +1197,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text += "💡 Просто напишите сообщение, чтобы связаться с ассистентом!\n\n"
     help_text += "📞 По всем вопросам обращайтесь к вашему ассистенту через команду /chat или просто напишите сообщение."
     
-    await update.message.reply_text(help_text)
+    update.message.reply_text(help_text)
 
-async def questionnaire_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def questionnaire_command(update: Update, context: CallbackContext):
     """Запускает анкету заново"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
@@ -1209,7 +1210,7 @@ async def questionnaire_command(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [['👨 Мужской', '👩 Женский']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
-    await update.message.reply_text(
+    update.message.reply_text(
         '🔄 Заполнение анкеты заново\n\n'
         'Выберите пол ассистента:',
         reply_markup=reply_markup
@@ -1219,19 +1220,19 @@ async def questionnaire_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ========== НОВЫЕ КОМАНДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ==========
 
-async def my_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def my_plan_command(update: Update, context: CallbackContext):
     """Показывает индивидуальный план пользователя"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     plan = get_user_plan_from_db(user_id)
     
     if not plan:
-        await update.message.reply_text(
+        update.message.reply_text(
             "📋 Индивидуальный план еще не готов.\n\n"
             "Наш ассистент анализирует вашу анкету и скоро составит для вас "
             "персональный план. Обычно это занимает до 24 часов.\n\n"
@@ -1277,15 +1278,15 @@ async def my_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_text += "\n😊 Оцените настроение: /mood <1-10>"
     plan_text += "\n⚡ Оцените энергию: /energy <1-10>"
     
-    await update.message.reply_text(plan_text)
+    update.message.reply_text(plan_text)
 
-async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def done_command(update: Update, context: CallbackContext):
     """Отмечает выполнение задачи"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите номер задачи:\n"
             "/done 1 - отметить задачу 1 выполненной\n"
             "/done 2 - отметить задачу 2 выполненной\n"
@@ -1296,13 +1297,13 @@ async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         task_number = int(context.args[0])
         if task_number < 1 or task_number > 4:
-            await update.message.reply_text("❌ Номер задачи должен быть от 1 до 4")
+            update.message.reply_text("❌ Номер задачи должен быть от 1 до 4")
             return
         
         # Здесь можно сохранить отметку о выполнении в базу
         task_names = {1: "первую", 2: "вторую", 3: "третью", 4: "четвертую"}
         
-        await update.message.reply_text(
+        update.message.reply_text(
             f"✅ Отлично! Вы выполнили {task_names[task_number]} задачу!\n"
             f"🎉 Продолжайте в том же духе!\n\n"
             f"Оцените свое состояние:\n"
@@ -1311,15 +1312,15 @@ async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     except ValueError:
-        await update.message.reply_text("❌ Номер задачи должен быть числом")
+        update.message.reply_text("❌ Номер задачи должен быть числом")
 
-async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def mood_command(update: Update, context: CallbackContext):
     """Оценка настроения"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Оцените ваше настроение от 1 до 10:\n"
             "/mood 1 - очень плохое\n"
             "/mood 5 - нейтральное\n" 
@@ -1330,7 +1331,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         mood = int(context.args[0])
         if mood < 1 or mood > 10:
-            await update.message.reply_text("❌ Оценка должна быть от 1 до 10")
+            update.message.reply_text("❌ Оценка должна быть от 1 до 10")
             return
         
         # Сохраняем оценку настроения
@@ -1357,18 +1358,18 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         
         response = mood_responses.get(mood, "Спасибо за оценку!")
-        await update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
+        update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
         
     except ValueError:
-        await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
+        update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
 
-async def energy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def energy_command(update: Update, context: CallbackContext):
     """Оценка уровня энергии"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Оцените ваш уровень энергии от 1 до 10:\n"
             "/energy 1 - совсем нет сил\n"
             "/energy 5 - средний уровень\n"
@@ -1379,7 +1380,7 @@ async def energy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         energy = int(context.args[0])
         if energy < 1 or energy > 10:
-            await update.message.reply_text("❌ Оценка должна быть от 1 до 10")
+            update.message.reply_text("❌ Оценка должна быть от 1 до 10")
             return
         
         # Сохраняем оценку энергии
@@ -1406,20 +1407,20 @@ async def energy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         
         response = energy_responses.get(energy, "Спасибо за оценку!")
-        await update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
+        update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
         
     except ValueError:
-        await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
+        update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
 
 # ========== НОВЫЕ КОМАНДЫ ДЛЯ ТРЕКИНГА ==========
 
-async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def water_command(update: Update, context: CallbackContext):
     """Отслеживание водного баланса"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите количество стаканов: /water 6\n\n"
             "Пример: /water 8 - выпито 8 стаканов воды"
         )
@@ -1428,7 +1429,7 @@ async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         water = int(context.args[0])
         if water < 0 or water > 20:
-            await update.message.reply_text("❌ Укажите разумное количество стаканов (0-20)")
+            update.message.reply_text("❌ Укажите разумное количество стаканов (0-20)")
             return
         
         # Сохраняем в основную базу
@@ -1453,18 +1454,18 @@ async def water_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             8: "💧 Идеально! Вы молодец!"
         }
         response = responses.get(water, f"💧 Записано: {water} стаканов")
-        await update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
+        update.message.reply_text(f"{response}\n\n📊 Данные сохранены в таблицу!")
         
     except ValueError:
-        await update.message.reply_text("❌ Количество должно быть числом")
+        update.message.reply_text("❌ Количество должно быть числом")
 
-async def medication_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def medication_command(update: Update, context: CallbackContext):
     """Отслеживание приема лекарств"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите лекарство: /medication витамин С\n\n"
             "Пример: /medication принял аспирин"
         )
@@ -1474,15 +1475,15 @@ async def medication_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Сохраняем в Google Sheets
     sheets_manager.save_daily_data(user_id, "лекарства", medication)
-    await update.message.reply_text(f"💊 Информация о лекарствах сохранена!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"💊 Информация о лекарствах сохранена!\n\n📊 Данные записаны в таблицу")
 
-async def habit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def habit_command(update: Update, context: CallbackContext):
     """Отслеживание привычек"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите привычку: /habit без сахара\n\n"
             "Пример: /habit не ел сладкое"
         )
@@ -1490,15 +1491,15 @@ async def habit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     habit = " ".join(context.args)
     sheets_manager.save_daily_data(user_id, "привычки", habit)
-    await update.message.reply_text(f"🔄 Привычка сохранена!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"🔄 Привычка сохранена!\n\n📊 Данные записаны в таблицу")
 
-async def development_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def development_command(update: Update, context: CallbackContext):
     """Отслеживание развития"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите что изучили: /development изучил Python\n\n"
             "Пример: /development прочитал книгу"
         )
@@ -1506,15 +1507,15 @@ async def development_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     development = " ".join(context.args)
     sheets_manager.save_daily_data(user_id, "развитие", development)
-    await update.message.reply_text(f"📚 Развитие сохранено!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"📚 Развитие сохранено!\n\n📊 Данные записаны в таблицу")
 
-async def progress_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def progress_note_command(update: Update, context: CallbackContext):
     """Отслеживание прогресса по целям"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите прогресс: /progress_note изучил Python\n\n"
             "Пример: /progress_note прочитал 50 страниц"
         )
@@ -1522,15 +1523,15 @@ async def progress_note_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     progress = " ".join(context.args)
     sheets_manager.save_daily_data(user_id, "прогресс", progress)
-    await update.message.reply_text(f"📈 Прогресс сохранен!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"📈 Прогресс сохранен!\n\n📊 Данные записаны в таблицу")
 
-async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def note_command(update: Update, context: CallbackContext):
     """Добавление примечаний"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Добавьте примечание: /note устал сегодня\n\n"
             "Пример: /note сегодня был продуктивный день"
         )
@@ -1538,15 +1539,15 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     note = " ".join(context.args)
     sheets_manager.save_daily_data(user_id, "примечание", note)
-    await update.message.reply_text(f"📝 Примечание сохранено!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"📝 Примечание сохранено!\n\n📊 Данные записаны в таблицу")
 
-async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def balance_command(update: Update, context: CallbackContext):
     """Оценка баланса дня"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
     if not context.args:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Оцените баланс: /balance хороший\n\n"
             "Пример: /balance сбалансированный день"
         )
@@ -1554,16 +1555,16 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     balance = " ".join(context.args)
     sheets_manager.save_daily_data(user_id, "баланс", balance)
-    await update.message.reply_text(f"⚖️ Баланс дня сохранен!\n\n📊 Данные записаны в таблицу")
+    update.message.reply_text(f"⚖️ Баланс дня сохранен!\n\n📊 Данные записаны в таблицу")
 
 # ========== КОМАНДЫ ДЛЯ НАПОМИНАНИЙ ==========
 
-async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def remind_command(update: Update, context: CallbackContext):
     """Установка разового напоминания"""
     user_id = update.effective_user.id
     
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Формат команды:\n"
             "/remind ВРЕМЯ ТЕКСТ\n\n"
             "💡 Примеры:\n"
@@ -1581,24 +1582,24 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         datetime.strptime(time_str, "%H:%M")
     except ValueError:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Неправильный формат времени.\n"
             "Используйте: ЧЧ:MM (например, 20:00 или 09:30)"
         )
         return
     
-    success = await reminder_system.set_custom_reminder(user_id, time_str, reminder_text)
+    success = reminder_system.set_custom_reminder(user_id, time_str, reminder_text)
     
     if success:
-        await update.message.reply_text(
+        update.message.reply_text(
             f"✅ Напоминание установлено на {time_str}:\n"
             f"📝 {reminder_text}\n\n"
             f"Я пришлю уведомление в указанное время!"
         )
     else:
-        await update.message.reply_text("❌ Не удалось установить напоминание")
+        update.message.reply_text("❌ Не удалось установить напоминание")
 
-async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def reminders_command(update: Update, context: CallbackContext):
     """Показывает активные напоминания"""
     user_id = update.effective_user.id
     
@@ -1611,24 +1612,24 @@ async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_reminders.append(f"🔄 {job_data['time']}: {job_data['type']}")
     
     if user_reminders:
-        await update.message.reply_text(
+        update.message.reply_text(
             "📋 Ваши напоминания:\n\n" + "\n".join(user_reminders) +
             "\n\n⚙️ Изменить настройки: /reminder_settings"
         )
     else:
-        await update.message.reply_text(
+        update.message.reply_text(
             "📭 У вас нет активных напоминаний\n\n"
             "⚙️ Настроить автоматические: /reminder_settings\n"
             "⏰ Установить разовое: /remind"
         )
 
-async def reminder_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def reminder_settings_command(update: Update, context: CallbackContext):
     """Настройка напоминаний"""
-    return await reminder_system.setup_reminders(update, context)
+    return reminder_system.setup_reminders(update, context)
 
-async def cancel_reminder_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def cancel_reminder_setup(update: Update, context: CallbackContext):
     """Отмена настройки напоминаний"""
-    await update.message.reply_text(
+    update.message.reply_text(
         "❌ Настройка напоминаний отменена.\n\n"
         "Вы всегда можете настроить их позже: /reminder_settings"
     )
@@ -1636,14 +1637,14 @@ async def cancel_reminder_setup(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ========== КОМАНДЫ ДЛЯ АДМИНИСТРАТОРА ==========
 
-async def create_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def create_plan_command(update: Update, context: CallbackContext):
     """Создает индивидуальный план для пользователя (только для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите ID пользователя:\n"
             "/create_plan <user_id>\n\n"
             "Пример: /create_plan 123456789"
@@ -1661,13 +1662,13 @@ async def create_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.close()
         
         if not user_data:
-            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
             return
         
         user_name, username = user_data
         
         # Здесь ассистент должен вручную создать план
-        await update.message.reply_text(
+        update.message.reply_text(
             f"📋 Создание плана для пользователя:\n"
             f"👤 Имя: {user_name}\n"
             f"🔗 Username: @{username if username else 'нет'}\n"
@@ -1680,16 +1681,16 @@ async def create_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        update.message.reply_text(f"❌ Ошибка: {e}")
 
-async def set_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_plan_command(update: Update, context: CallbackContext):
     """Устанавливает план для пользователя (только для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Неправильный формат команды.\n\n"
             "Использование:\n"
             "/set_plan <user_id> утренний_ритуал1|утренний_ритуал2|задача1|задача2|задача3|задача4|обед|вечерний_ритуал1|вечерний_ритуал2|совет|сон|вода|активность\n\n"
@@ -1702,7 +1703,7 @@ async def set_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_parts = " ".join(context.args[1:]).split("|")
     
     if len(plan_parts) < 13:
-        await update.message.reply_text("❌ Недостаточно частей плана. Нужно 13 частей, разделенных |")
+        update.message.reply_text("❌ Недостаточно частей плана. Нужно 13 частей, разделенных |")
         return
     
     try:
@@ -1714,7 +1715,7 @@ async def set_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         if not user_data:
-            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
             return
         
         user_name = user_data[0]
@@ -1745,7 +1746,7 @@ async def set_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Отправляем уведомление пользователю
         try:
-            await context.bot.send_message(
+            context.bot.send_message(
                 chat_id=user_id,
                 text="🎉 Ваш индивидуальный план готов!\n\n"
                      "Посмотреть его можно командой: /my_plan\n\n"
@@ -1755,23 +1756,23 @@ async def set_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
         
-        await update.message.reply_text(
+        update.message.reply_text(
             f"✅ Индивидуальный план для {user_name} создан и сохранен!\n\n"
             f"Пользователь получил уведомление.\n\n"
             f"Для просмотра прогресса: /view_progress {user_id}"
         )
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка создания плана: {e}")
+        update.message.reply_text(f"❌ Ошибка создания плана: {e}")
 
-async def view_progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def view_progress_command(update: Update, context: CallbackContext):
     """Показывает прогресс пользователя (только для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Укажите ID пользователя:\n"
             "/view_progress <user_id>\n\n"
             "Пример: /view_progress 123456789"
@@ -1788,7 +1789,7 @@ async def view_progress_command(update: Update, context: ContextTypes.DEFAULT_TY
         user_data = c.fetchone()
         
         if not user_data:
-            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
             return
         
         user_name, username, reg_date = user_data
@@ -1825,14 +1826,14 @@ async def view_progress_command(update: Update, context: ContextTypes.DEFAULT_TY
         progress_text += f"/create_plan {user_id} - создать новый план\n"
         progress_text += f"/get_questionnaire {user_id} - посмотреть анкету"
         
-        await update.message.reply_text(progress_text)
+        update.message.reply_text(progress_text)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        update.message.reply_text(f"❌ Ошибка: {e}")
 
 # ========== РАССЫЛКИ И СИСТЕМНЫЕ КОМАНДЫ ==========
 
-async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
+def send_daily_plan(context: CallbackContext):
     """Отправляет ежедневный план всем зарегистрированным пользователям"""
     try:
         logger.info("🕘 Запуск ежедневной рассылки...")
@@ -1859,9 +1860,9 @@ async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
                     # Стандартное уведомление
                     message_text = "🌅 Доброе утро! Ваш план на сегодня готов к просмотру: /plan"
                 
-                await context.bot.send_message(chat_id=user_id, text=message_text)
+                context.bot.send_message(chat_id=user_id, text=message_text)
                 success_count += 1
-                await asyncio.sleep(0.1)
+                time.sleep(0.1)
                 
             except Exception as e:
                 error_count += 1
@@ -1872,33 +1873,33 @@ async def send_daily_plan(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в ежедневной рассылке: {e}")
 
-async def test_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def test_daily(update: Update, context: CallbackContext):
     """Тестовая команда для проверки рассылки (только для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
-    await update.message.reply_text("🔄 Запуск тестовой рассылки...")
-    await send_daily_plan(context)
-    await update.message.reply_text("✅ Тестовая рассылка завершена!")
+    update.message.reply_text("🔄 Запуск тестовой рассылки...")
+    send_daily_plan(context)
+    update.message.reply_text("✅ Тестовая рассылка завершена!")
 
-async def job_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def job_info(update: Update, context: CallbackContext):
     """Показывает информацию о запланированных заданиях (для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     try:
-        application = context.application
-        job_queue = application.job_queue
+        updater = context.dispatcher.updater
+        job_queue = updater.job_queue
         
         if not job_queue:
-            await update.message.reply_text("❌ JobQueue не доступен")
+            update.message.reply_text("❌ JobQueue не доступен")
             return
         
-        jobs = list(job_queue.jobs())
+        jobs = job_queue.jobs()
         if not jobs:
-            await update.message.reply_text("📭 Нет активных заданий в JobQueue")
+            update.message.reply_text("📭 Нет активных заданий в JobQueue")
             return
         
         info = "📋 Активные задания JobQueue:\n\n"
@@ -1910,34 +1911,34 @@ async def job_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         info += f"🕐 Текущее время сервера: {datetime.now()}"
         
-        await update.message.reply_text(info)
+        update.message.reply_text(info)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка получения информации: {e}")
+        update.message.reply_text(f"❌ Ошибка получения информации: {e}")
 
-async def setup_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def setup_jobs(update: Update, context: CallbackContext):
     """Принудительно настраивает JobQueue (для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     try:
-        application = context.application
-        job_queue = application.job_queue
+        updater = context.dispatcher.updater
+        job_queue = updater.job_queue
         
         if not job_queue:
-            await update.message.reply_text("❌ JobQueue не доступен")
+            update.message.reply_text("❌ JobQueue не доступен")
             return
         
         # Очищаем старые задания
-        current_jobs = list(job_queue.jobs())
+        current_jobs = job_queue.jobs()
         for job in current_jobs:
             job.schedule_removal()
         
         # Добавляем новое задание
         job_queue.run_daily(
             send_daily_plan,
-            time=time(hour=6, minute=0),  # 9:00 по Москве (UTC+3)
+            time=dt_time(hour=6, minute=0),  # 9:00 по Москве (UTC+3)
             days=tuple(range(7)),
             name="daily_plan_notification"
         )
@@ -1949,7 +1950,7 @@ async def setup_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name="test_job"
         )
         
-        await update.message.reply_text(
+        update.message.reply_text(
             "✅ JobQueue перезапущен!\n\n"
             "📅 Ежедневные уведомления настроены на 9:00 по Москве\n"
             "🧪 Тестовое задание запланировано через 1 минуту\n\n"
@@ -1958,12 +1959,12 @@ async def setup_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("JobQueue принудительно перезапущен через команду /setup_jobs")
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка настройки JobQueue: {e}")
+        update.message.reply_text(f"❌ Ошибка настройки JobQueue: {e}")
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def admin_stats(update: Update, context: CallbackContext):
     """Статистика для администратора"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     conn = sqlite3.connect('clients.db')
@@ -2005,16 +2006,16 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     stats_text += f"📈 Бот работает стабильно! ✅"
     
-    await update.message.reply_text(stats_text)
+    update.message.reply_text(stats_text)
 
-async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_questionnaire(update: Update, context: CallbackContext):
     """Получает анкету пользователя (для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Неправильный формат команды.\n\n"
             "✅ Использование:\n"
             "<code>/get_questionnaire &lt;user_id&gt;</code>\n\n"
@@ -2035,7 +2036,7 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data = c.fetchone()
             
             if not user_data:
-                await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден.")
+                update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден.")
                 return
             
             first_name, last_name, username = user_data
@@ -2050,7 +2051,7 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Фильтруем ответы, убирая вопрос №0
         visible_answers = [a for a in answers if a[0] != 0]
         if not visible_answers:
-            await update.message.reply_text(f"❌ Пользователь {first_name} еще не заполнял анкету или нет видимых ответов.")
+            update.message.reply_text(f"❌ Пользователь {first_name} еще не заполнял анкету или нет видимых ответов.")
             return
         
         # Формируем анкету
@@ -2074,24 +2075,24 @@ async def get_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(questionnaire) > max_length:
             parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
             for i, part in enumerate(parts):
-                await update.message.reply_text(f"📄 Часть {i+1}:\n\n{part}")
+                update.message.reply_text(f"📄 Часть {i+1}:\n\n{part}")
         else:
-            await update.message.reply_text(questionnaire)
+            update.message.reply_text(questionnaire)
             
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка получения анкеты: {e}")
+        update.message.reply_text(f"❌ Ошибка получения анкеты: {e}")
         logger.exception(f"Ошибка получения анкеты пользователя {user_id}")
 
-async def send_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def send_to_user(update: Update, context: CallbackContext):
     """Отправляет сообщение пользователю от имени ассистента"""
     # Проверяем, что команду отправляет администратор
     if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
     # Извлекаем ID пользователя и сообщение из команды
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
+        update.message.reply_text(
             "❌ Неправильный формат команды.\n\n"
             "✅ Использование:\n"
             "<code>/send &lt;user_id&gt; Ваше сообщение</code>\n\n"
@@ -2109,24 +2110,24 @@ async def send_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_message(user_id, message, 'outgoing')
         
         # Отправляем сообщение пользователю
-        await context.bot.send_message(
+        context.bot.send_message(
             chat_id=user_id, 
             text=f"💌 Сообщение от вашего ассистента:\n\n{message}\n\n"
                  f"💬 Чтобы ответить, просто напишите сообщение."
         )
-        await update.message.reply_text("✅ Сообщение отправлено пользователю!")
+        update.message.reply_text("✅ Сообщение отправлено пользователю!")
         
         # Логируем действие
         logger.info(f"Администратор отправил сообщение пользователю {user_id}: {message}")
         
     except Exception as e:
         error_msg = f"❌ Ошибка отправки: {e}"
-        await update.message.reply_text(error_msg)
+        update.message.reply_text(error_msg)
         logger.error(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
 
 # ========== ОБРАБОТЧИКИ СООБЩЕНИЙ ==========
 
-async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_all_messages(update: Update, context: CallbackContext):
     """Обработчик для всех входящих сообщений"""
     # Пропускаем команды
     if update.message.text and update.message.text.startswith('/'):
@@ -2140,7 +2141,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Если пользователь не зарегистрирован, предлагаем начать
     if not check_user_registered(user_id):
-        await update.message.reply_text(
+        update.message.reply_text(
             "👋 Для начала работы с персональным ассистентом отправьте команду /start"
         )
         return
@@ -2176,26 +2177,26 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Отправляем сообщение администратору
     try:
-        await context.bot.send_message(
+        context.bot.send_message(
             chat_id=YOUR_CHAT_ID, 
             text=user_info,
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
-        await update.message.reply_text("✅ Ваше сообщение отправлено ассистенту! Ответим в ближайшее время.")
+        update.message.reply_text("✅ Ваше сообщение отправлено ассистенту! Ответим в ближайшее время.")
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения администратору: {e}")
-        await update.message.reply_text("❌ Произошла ошибка при отправке сообщения. Попробуйте позже.")
+        update.message.reply_text("❌ Произошла ошибка при отправке сообщения. Попробуйте позже.")
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_callback(update: Update, context: CallbackContext):
     """Обработчик callback кнопок"""
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     if query.data.startswith('reply_'):
         user_id = query.data.replace('reply_', '')
         context.user_data['reply_user_id'] = user_id
-        await query.edit_message_text(
+        query.edit_message_text(
             text=f"💌 Ответ пользователю\n\n"
                  f"👤 ID пользователя: {user_id}\n\n"
                  f"📝 Чтобы ответить, используйте команду:\n"
@@ -2205,7 +2206,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data.startswith('view_questionnaire_'):
         user_id = query.data.replace('view_questionnaire_', '')
-        await query.edit_message_text(
+        query.edit_message_text(
             text=f"📋 Просмотр анкеты пользователя {user_id}\n\n"
                  f"📝 Для просмотра анкеты используйте команду:\n"
                  f"<code>/get_questionnaire {user_id}</code>",
@@ -2226,7 +2227,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name = user_data[0]
             reg_date = user_data[1]
             
-            await query.edit_message_text(
+            query.edit_message_text(
                 text=f"📊 Статистика пользователя:\n\n"
                      f"👤 Имя: {user_name}\n"
                      f"🆔 ID: {user_id}\n"
@@ -2241,22 +2242,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data.startswith('create_plan_'):
         user_id = query.data.replace('create_plan_', '')
-        await query.edit_message_text(
+        query.edit_message_text(
             text=f"📋 Создание плана для пользователя {user_id}\n\n"
                  f"Используйте команду:\n"
                  f"<code>/create_plan {user_id}</code>",
             parse_mode='HTML'
         )
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+def cancel(update: Update, context: CallbackContext) -> int:
     """Отмена диалога"""
-    await update.message.reply_text(
+    update.message.reply_text(
         '❌ Диалог прерван. Чтобы начать заново, отправьте /start',
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def error_handler(update: Update, context: CallbackContext):
     """Обрабатывает ошибки в боте"""
     logger.error(msg="Исключение при обработке обновления:", exc_info=context.error)
     
@@ -2268,7 +2269,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Для других ошибок можно отправить сообщение пользователю
     try:
         if update and update.effective_message:
-            await update.effective_message.reply_text(
+            update.effective_message.reply_text(
                 "❌ Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже."
             )
     except Exception as e:
@@ -2278,155 +2279,133 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main():
     """Основная функция запуска бота"""
-    max_retries = 5
-    retry_count = 0
-    
-    while retry_count < max_retries:
+    try:
+        # Создание Updater (для версии 13.x)
+        updater = Updater(TOKEN, use_context=True)
+        
+        # Получаем диспетчер для регистрации обработчиков
+        dp = updater.dispatcher
+
+        # Инициализация системы напоминаний
+        global reminder_system
+        reminder_system = SmartReminderSystem(updater)
+
+        # Добавляем обработчик ошибок
+        dp.add_error_handler(error_handler)
+
+        # Обработчики для напоминаний
+        reminder_conv = ConversationHandler(
+            entry_points=[
+                CommandHandler('reminder_settings', reminder_settings_command),
+                MessageHandler(Filters.regex('^(⚙️ Настроить напоминания)$'), reminder_settings_command)
+            ],
+            states={
+                "REMINDER_SETUP": [
+                    MessageHandler(Filters.text & ~Filters.command, reminder_system.handle_reminder_setup)
+                ]
+            },
+            fallbacks=[CommandHandler('cancel', cancel_reminder_setup)]
+        )
+
+        # Настройка обработчика диалога
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                GENDER: [MessageHandler(Filters.regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                FIRST_QUESTION: [MessageHandler(Filters.text & ~Filters.command, handle_question)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+        )
+
+        dp.add_handler(conv_handler)
+        dp.add_handler(reminder_conv)
+        
+        # Добавляем обработчики для команд
+        dp.add_handler(CommandHandler("plan", plan_command))
+        dp.add_handler(CommandHandler("progress", progress_command))
+        dp.add_handler(CommandHandler("profile", profile_command))
+        dp.add_handler(CommandHandler("chat", chat_command))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("stats", admin_stats))
+        dp.add_handler(CommandHandler("send", send_to_user))
+        dp.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
+        dp.add_handler(CommandHandler("questionnaire", questionnaire_command))
+        dp.add_handler(CommandHandler("test_daily", test_daily))
+        dp.add_handler(CommandHandler("jobinfo", job_info))
+        dp.add_handler(CommandHandler("setup_jobs", setup_jobs))
+        
+        # Команды для пользователей
+        dp.add_handler(CommandHandler("my_plan", my_plan_command))
+        dp.add_handler(CommandHandler("done", done_command))
+        dp.add_handler(CommandHandler("mood", mood_command))
+        dp.add_handler(CommandHandler("energy", energy_command))
+        
+        # Новые команды для данных
+        dp.add_handler(CommandHandler("water", water_command))
+        dp.add_handler(CommandHandler("medication", medication_command))
+        dp.add_handler(CommandHandler("habit", habit_command))
+        dp.add_handler(CommandHandler("development", development_command))
+        dp.add_handler(CommandHandler("progress_note", progress_note_command))
+        dp.add_handler(CommandHandler("note", note_command))
+        dp.add_handler(CommandHandler("balance", balance_command))
+        
+        # Команды для напоминаний
+        dp.add_handler(CommandHandler("remind", remind_command))
+        dp.add_handler(CommandHandler("reminders", reminders_command))
+        
+        # Команды для администратора
+        dp.add_handler(CommandHandler("create_plan", create_plan_command))
+        dp.add_handler(CommandHandler("set_plan", set_plan_command))
+        dp.add_handler(CommandHandler("view_progress", view_progress_command))
+        
+        # Добавляем обработчик для callback кнопок
+        dp.add_handler(CallbackQueryHandler(button_callback))
+        
+        # Добавляем обработчик для всех сообщений
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_all_messages))
+        
+        # Настройка PLANNER
         try:
-            # Создание Application
-            application = Application.builder().token(TOKEN).build()
-
-            # Добавляем обработчик ошибок
-            application.add_error_handler(error_handler)
-
-            # Инициализация системы напоминаний
-            global reminder_system
-            reminder_system = SmartReminderSystem(application)
-
-            # Обработчики для напоминаний
-            reminder_conv = ConversationHandler(
-                entry_points=[
-                    CommandHandler('reminder_settings', reminder_settings_command),
-                    MessageHandler(filters.Regex('^(⚙️ Настроить напоминания)$'), reminder_settings_command)
-                ],
-                states={
-                    "REMINDER_SETUP": [
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, reminder_system.handle_reminder_setup)
-                    ]
-                },
-                fallbacks=[CommandHandler('cancel', cancel_reminder_setup)]
-            )
-
-            # Настройка обработчика диалога
-            conv_handler = ConversationHandler(
-                entry_points=[CommandHandler('start', start)],
-                states={
-                    GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
-                    FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
-                },
-                fallbacks=[CommandHandler('cancel', cancel)],
-            )
-
-            application.add_handler(conv_handler)
-            application.add_handler(reminder_conv)
-            
-            # Добавляем обработчики для команд
-            application.add_handler(CommandHandler("plan", plan_command))
-            application.add_handler(CommandHandler("progress", progress_command))
-            application.add_handler(CommandHandler("profile", profile_command))
-            application.add_handler(CommandHandler("chat", chat_command))
-            application.add_handler(CommandHandler("help", help_command))
-            application.add_handler(CommandHandler("stats", admin_stats))
-            application.add_handler(CommandHandler("send", send_to_user))
-            application.add_handler(CommandHandler("get_questionnaire", get_questionnaire))
-            application.add_handler(CommandHandler("questionnaire", questionnaire_command))
-            application.add_handler(CommandHandler("test_daily", test_daily))
-            application.add_handler(CommandHandler("jobinfo", job_info))
-            application.add_handler(CommandHandler("setup_jobs", setup_jobs))
-            
-            # Команды для пользователей
-            application.add_handler(CommandHandler("my_plan", my_plan_command))
-            application.add_handler(CommandHandler("done", done_command))
-            application.add_handler(CommandHandler("mood", mood_command))
-            application.add_handler(CommandHandler("energy", energy_command))
-            
-            # Новые команды для данных
-            application.add_handler(CommandHandler("water", water_command))
-            application.add_handler(CommandHandler("medication", medication_command))
-            application.add_handler(CommandHandler("habit", habit_command))
-            application.add_handler(CommandHandler("development", development_command))
-            application.add_handler(CommandHandler("progress_note", progress_note_command))
-            application.add_handler(CommandHandler("note", note_command))
-            application.add_handler(CommandHandler("balance", balance_command))
-            
-            # Команды для напоминаний
-            application.add_handler(CommandHandler("remind", remind_command))
-            application.add_handler(CommandHandler("reminders", reminders_command))
-            
-            # Команды для администратора
-            application.add_handler(CommandHandler("create_plan", create_plan_command))
-            application.add_handler(CommandHandler("set_plan", set_plan_command))
-            application.add_handler(CommandHandler("view_progress", view_progress_command))
-            
-            # Добавляем обработчик для callback кнопок
-            application.add_handler(CallbackQueryHandler(button_callback))
-            
-            # Добавляем обработчик для всех сообщений
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
-            
-            # Настройка PLANNER
-            try:
-                job_queue = application.job_queue
-                if job_queue:
-                    # Очищаем возможные старые задания
-                    current_jobs = list(job_queue.jobs())
-                    for job in current_jobs:
-                        job.schedule_removal()
-                    
-                    # Добавляем новое задание с правильным временем
-                    job_queue.run_daily(
-                        send_daily_plan,
-                        time=time(hour=6, minute=0),  # 9:00 по Москве (UTC+3)
-                        days=tuple(range(7)),
-                        name="daily_plan_notification"
-                    )
-                    
-                    # Логируем информацию о задании
-                    logger.info("✅ JobQueue НАСТРОЕН для ежедневных уведомлений")
-                    logger.info(f"🕘 Время уведомлений: 9:00 по Москве (6:00 UTC)")
-                    
-                    # Дополнительная проверка - создаем тестовое задание через 2 минуты
-                    job_queue.run_once(
-                        lambda context: logger.info("🧪 Тест JobQueue: планировщик работает!"), 
-                        when=120,
-                        name="test_job_queue"
-                    )
-                    
-                else:
-                    logger.error("❌ JobQueue не доступен - планировщик не работает!")
-                    
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка настройки JobQueue: {e}")
-
-            logger.info("🤖 Бот запускается...")
-            
-            # Запускаем бота с обработкой ошибок Conflict
-            application.run_polling(
-                drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES,
-                close_loop=False
-            )
-            
-            # Если бот завершил работу нормально, выходим из цикла
-            break
-            
-        except Exception as e:
-            retry_count += 1
-            logger.error(f"❌ Ошибка запуска бота (попытка {retry_count}/{max_retries}): {e}")
-            
-            # Если это ошибка Conflict, ждем и пробуем снова
-            if "Conflict" in str(e):
-                if retry_count < max_retries:
-                    wait_time = 10 * retry_count  # Увеличиваем задержку с каждой попыткой
-                    logger.info(f"🔄 Перезапуск через {wait_time} секунд...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error("❌ Достигнут лимит попыток перезапуска из-за Conflict")
-                    break
+            job_queue = updater.job_queue
+            if job_queue:
+                # Очищаем возможные старые задания
+                current_jobs = job_queue.jobs()
+                for job in current_jobs:
+                    job.schedule_removal()
+                
+                # Добавляем новое задание с правильным временем
+                job_queue.run_daily(
+                    send_daily_plan,
+                    time=dt_time(hour=6, minute=0),  # 9:00 по Москве (UTC+3)
+                    days=tuple(range(7)),
+                    name="daily_plan_notification"
+                )
+                
+                # Логируем информацию о задании
+                logger.info("✅ JobQueue НАСТРОЕН для ежедневных уведомлений")
+                logger.info(f"🕘 Время уведомлений: 9:00 по Москве (6:00 UTC)")
+                
+                # Дополнительная проверка - создаем тестовое задание через 2 минуты
+                job_queue.run_once(
+                    lambda ctx: logger.info("🧪 Тест JobQueue: планировщик работает!"), 
+                    120,
+                    name="test_job_queue"
+                )
+                
             else:
-                # Для других ошибок выходим из цикла
-                logger.error(f"❌ Неизвестная ошибка, завершение работы: {e}")
-                break
+                logger.error("❌ JobQueue не доступен - планировщик не работает!")
+                
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка настройки JobQueue: {e}")
+
+        logger.info("🤖 Бот запускается...")
+        
+        # Запускаем бота
+        updater.start_polling()
+        updater.idle()
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска бота: {e}")
 
 if __name__ == '__main__':
     main()
