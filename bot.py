@@ -52,7 +52,7 @@ except ModuleNotFoundError:
     sys.modules['imghdr'] = ImghdrShim()
     print("✅ Заглушка imghdr установлена для Python 3.13")
 
-# ========== ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ==========
+# ========== ОСТАЛЬНОЙ КОД ==========
 
 import logging
 import sqlite3
@@ -67,12 +67,13 @@ from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
-    Filters,
     CallbackContext,
     ConversationHandler,
     CallbackQueryHandler,
     JobQueue
 )
+# Исправляем импорт Filters -> filters
+from telegram.ext import filters
 
 from dotenv import load_dotenv
 
@@ -2352,11 +2353,11 @@ def main():
         reminder_conv = ConversationHandler(
             entry_points=[
                 CommandHandler('reminder_settings', reminder_settings_command),
-                MessageHandler(Filters.regex('^(⚙️ Настроить напоминания)$'), reminder_settings_command)
+                MessageHandler(filters.Regex('^(⚙️ Настроить напоминания)$'), reminder_settings_command)
             ],
             states={
                 "REMINDER_SETUP": [
-                    MessageHandler(Filters.text & ~Filters.command, reminder_system.handle_reminder_setup)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, reminder_system.handle_reminder_setup)
                 ]
             },
             fallbacks=[CommandHandler('cancel', cancel_reminder_setup)]
@@ -2366,8 +2367,8 @@ def main():
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
-                GENDER: [MessageHandler(Filters.regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
-                FIRST_QUESTION: [MessageHandler(Filters.text & ~Filters.command, handle_question)],
+                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
@@ -2417,7 +2418,7 @@ def main():
         dp.add_handler(CallbackQueryHandler(button_callback))
         
         # Добавляем обработчик для всех сообщений
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_all_messages))
+        dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
         # Настройка PLANNER
         try:
@@ -2436,7 +2437,7 @@ def main():
                     name="daily_plan_notification"
                 )
                 
-                # Логируем информацию о задании
+                # Логиру задании
                 logger.info("✅ JobQueue НАСТРОЕН для ежедневных уведомлений")
                 logger.info(f"🕘 Время уведомлений: 9:00 по Москве (6:00 UTC)")
                 
