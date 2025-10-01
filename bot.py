@@ -1,4 +1,59 @@
 import os
+import sys
+import mimetypes
+
+# ========== ЗАГЛУШКА ДЛЯ IMGHDR В PYTHON 3.13 ==========
+try:
+    import imghdr
+except ModuleNotFoundError:
+    # Создаем заглушку для imghdr в Python 3.13+
+    class ImghdrShim:
+        @staticmethod
+        def what(file, h=None):
+            if h is not None:
+                file = h
+            
+            if hasattr(file, 'read'):
+                # Это файлоподобный объект
+                header = file.read(12)
+                file.seek(0)
+            else:
+                # Это байты или путь к файлу
+                if isinstance(file, bytes):
+                    header = file[:12]
+                else:
+                    # Пытаемся открыть файл
+                    try:
+                        with open(file, 'rb') as f:
+                            header = f.read(12)
+                    except (OSError, TypeError):
+                        return None
+            
+            # Простая проверка типов изображений
+            if header.startswith(b'\xff\xd8\xff'):
+                return 'jpeg'
+            elif header.startswith(b'\x89PNG\r\n\x1a\n'):
+                return 'png'
+            elif header.startswith(b'GIF8'):
+                return 'gif'
+            elif header.startswith(b'BM'):
+                return 'bmp'
+            elif header.startswith(b'RIFF') and header[8:12] == b'WEBP':
+                return 'webp'
+            
+            # Fallback к mimetypes
+            if isinstance(file, str):
+                mime = mimetypes.guess_type(file)[0]
+                if mime and mime.startswith('image/'):
+                    return mime.split('/')[1]
+            
+            return None
+    
+    sys.modules['imghdr'] = ImghdrShim()
+    print("✅ Заглушка imghdr установлена для Python 3.13")
+
+# ========== ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ==========
+
 import logging
 import sqlite3
 import asyncio
