@@ -504,7 +504,7 @@ def save_plan_to_sheets(user_id: int, user_name: str, plan_data: Dict[str, Any])
         ]
         
         worksheet.append_row(row_data)
-        logger.info(f"План пользователя {user_id} сохранен в Google Sheets")
+        logger.info(f"План пользователя {user_id} сохранена в Google Sheets")
         
     except Exception as e:
         logger.error(f"Ошибка сохранения плана в Google Sheets: {e}")
@@ -2336,8 +2336,8 @@ def error_handler(update: Update, context: CallbackContext):
 def main():
     """Основная функция запуска бота"""
     try:
-        # Создание Updater (для версии 13.x)
-        updater = Updater(TOKEN, use_context=True)
+        # Создание Updater (исправлено - убрали use_context)
+        updater = Updater(TOKEN)
         
         # Получаем диспетчер для регистрации обработчиков
         dp = updater.dispatcher
@@ -2437,7 +2437,7 @@ def main():
                     name="daily_plan_notification"
                 )
                 
-                # Логиру задании
+                # Логируем информацию о задании
                 logger.info("✅ JobQueue НАСТРОЕН для ежедневных уведомлений")
                 logger.info(f"🕘 Время уведомлений: 9:00 по Москве (6:00 UTC)")
                 
