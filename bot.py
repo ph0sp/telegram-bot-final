@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 
-# Google Sheets (опционально)
+# Google Sheets
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get('BOT_TOKEN')
 YOUR_CHAT_ID = os.environ.get('YOUR_CHAT_ID')
-GOOGLE_SHEETS_CREDENTIALS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
+GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+GOOGLE_SHEETS_ID = os.environ.get('GOOGLE_SHEETS_ID')
 
 if not TOKEN:
     logger.error("❌ Токен бота не найден! Установите BOT_TOKEN")
@@ -187,68 +188,104 @@ def init_db():
 
 init_db()
 
-# ========== GOOGLE SHEETS ==========
+# ========== GOOGLE SHEETS ИНТЕГРАЦИЯ ==========
 
 def init_google_sheets():
-    """Инициализация Google Sheets"""
+    """Инициализация Google Sheets с новой структурой"""
     if not GOOGLE_SHEETS_AVAILABLE:
         logger.warning("⚠️ Google Sheets не доступен")
         return None
     
     try:
-        if GOOGLE_SHEETS_CREDENTIALS and os.path.exists(GOOGLE_SHEETS_CREDENTIALS):
-            scope = ['https://www.googleapis.com/auth/spreadsheets']
-            creds = Credentials.from_service_account_file(GOOGLE_SHEETS_CREDENTIALS, scopes=scope)
-        else:
-            credentials_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-            if credentials_json:
-                creds_dict = json.loads(credentials_json)
-                scope = ['https://www.googleapis.com/auth/spreadsheets']
-                creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-            else:
-                logger.warning("⚠️ Google Sheets credentials не найдены")
-                return None
+        if not GOOGLE_CREDENTIALS_JSON or not GOOGLE_SHEETS_ID:
+            logger.warning("⚠️ Google Sheets credentials не настроены")
+            return None
         
+        # Парсим JSON credentials
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        
+        # Настраиваем scope
+        scope = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        
+        # Создаем credentials
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        
+        # Авторизуемся
         client = gspread.authorize(creds)
         
-        try:
-            sheet = client.open("Планы_пользователей_бота")
-        except gspread.SpreadsheetNotFound:
-            sheet = client.create("Планы_пользователей_бота")
-            worksheet1 = sheet.sheet1
-            worksheet1.title = "Анкеты"
-            worksheet1.append_row([
-                "ID", "Имя", "Username", "Дата регистрации", "Ассистент",
-                "Главная цель", "Мотивация", "Время в день", "Дедлайн",
-                "Режим сна", "Текущий день", "Пик продуктивности", 
-                "Время соцсетей", "Уровень выгорания", "Физ активность",
-                "Любимый спорт", "Дни тренировок", "Ограничения по здоровью",
-                "Режим питания", "Вода в день", "Изменения в питании",
-                "Время готовки", "Отдых", "Частота отдыха", "Перерывы",
-                "Общение", "Утренние ритуалы", "Вечерние ритуалы",
-                "Баланс", "Препятствия", "Дни низкой энергии"
-            ])
-            
-            worksheet2 = sheet.add_worksheet(title="Планы", rows=1000, cols=20)
-            worksheet2.append_row([
-                "ID", "Имя", "Дата плана", "Статус", "Утренний ритуал 1",
-                "Утренний ритуал 2", "Задача 1", "Задача 2", "Задача 3",
-                "Задача 4", "Обеденный перерыв", "Вечерний ритуал 1",
-                "Вечерний ритуал 2", "Совет ассистента", "Время сна",
-                "Вода", "Физ активность", "Примечания"
-            ])
-            
-            worksheet3 = sheet.add_worksheet(title="Прогресс", rows=1000, cols=15)
-            worksheet3.append_row([
-                "ID", "Имя", "Дата", "Выполнено задач", "Настроение (1-10)",
-                "Энергия (1-10)", "Качество сна", "Выпито воды", 
-                "Выполнена активность", "Комментарий пользователя",
-                "Оценка дня", "Трудности"
-            ])
-            
-            logger.info("✅ Новая Google таблица создана")
+        # Открываем таблицу
+        sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         
-        logger.info("✅ Google Sheets инициализирован")
+        # Создаем листы если их нет
+        try:
+            sheet.worksheet("клиенты_детали")
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title="клиенты_детали", rows=1000, cols=20)
+            worksheet.append_row([
+                "id_клиента", "telegram_username", "имя", "старт_работы",
+                "пробуждение", "отход_ко_сну", "предпочтения_активности",
+                "особенности_питания", "предпочтения_отдыха",
+                "постоянные_утренние_ритуалы", "постоянные_вечерние_ритуалы",
+                "индивидуальные_привычки", "лекарства_витамины",
+                "цели_развития", "главная_цель", "особые_примечания",
+                "дата_последней_активности", "статус"
+            ])
+        
+        try:
+            sheet.worksheet("индивидуальные_планы_месяц")
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title="индивидуальные_планы_месяц", rows=1000, cols=40)
+            # Базовые колонки
+            headers = ["id_клиента", "telegram_username", "имя", "месяц"]
+            # Добавляем колонки для дат (1-31)
+            for day in range(1, 32):
+                headers.append(f"{day} октября")
+            headers.extend(["общие_комментарии_месяца", "последнее_обновление"])
+            worksheet.append_row(headers)
+        
+        try:
+            sheet.worksheet("ежедневные_отчеты")
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title="ежедневные_отчеты", rows=1000, cols=20)
+            worksheet.append_row([
+                "id_клиента", "telegram_username", "имя", "дата",
+                "выполнено_стратегических_задач", "утренние_ритуалы_выполнены",
+                "вечерние_ритуалы_выполнены", "настроение", "энергия",
+                "уровень_фокуса", "уровень_мотивации", "проблемы_препятствия",
+                "вопросы_ассистенту", "что_получилось_хорошо", 
+                "ключевые_достижения_дня", "что_можно_улучшить",
+                "корректировки_на_завтра", "водный_баланс_факт", "статус_дня"
+            ])
+        
+        try:
+            sheet.worksheet("статистика_месяца")
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title="статистика_месяца", rows=1000, cols=20)
+            worksheet.append_row([
+                "id_клиента", "telegram_username", "имя", "месяц",
+                "среднее_настроение", "средний_уровень_мотивации",
+                "процент_выполнения_планов", "прогресс_по_целям",
+                "количество_активных_дней", "тренд_настроения",
+                "процент_выполнения_утренних_ритуалов",
+                "процент_выполнения_вечерних_ритуалов",
+                "общее_количество_достижений", "основные_корректировки_месяца",
+                "рекомендации_на_следующий_месяц", "итоги_месяца"
+            ])
+        
+        try:
+            sheet.worksheet("админ_панель")
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title="админ_панель", rows=1000, cols=10)
+            worksheet.append_row([
+                "id_клиента", "telegram_username", "имя", "текущий_статус",
+                "требует_внимания", "последняя_корректировка",
+                "следующий_чекап", "приоритет", "заметки_ассистента"
+            ])
+        
+        logger.info("✅ Google Sheets инициализирован с новой структурой")
         return sheet
     
     except Exception as e:
@@ -257,10 +294,227 @@ def init_google_sheets():
 
 google_sheet = init_google_sheets()
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+# ========== НОВЫЕ ФУНКЦИИ GOOGLE SHEETS ==========
+
+def save_client_to_sheets(user_data: Dict[str, Any]):
+    """Сохраняет клиента в лист 'клиенты_детали'"""
+    if not google_sheet:
+        logger.warning("Google Sheets не доступен")
+        return False
+    
+    try:
+        worksheet = google_sheet.worksheet("клиенты_детали")
+        
+        # Ищем существующего клиента
+        try:
+            cell = worksheet.find(str(user_data['user_id']))
+            row = cell.row
+            # Обновляем существующую запись
+            worksheet.update(f'A{row}:R{row}', [[
+                user_data['user_id'],
+                user_data.get('telegram_username', ''),
+                user_data.get('first_name', ''),
+                user_data.get('start_date', datetime.now().strftime("%Y-%m-%d")),
+                user_data.get('wake_time', ''),
+                user_data.get('sleep_time', ''),
+                user_data.get('activity_preferences', ''),
+                user_data.get('diet_features', ''),
+                user_data.get('rest_preferences', ''),
+                user_data.get('morning_rituals', ''),
+                user_data.get('evening_rituals', ''),
+                user_data.get('personal_habits', ''),
+                user_data.get('medications', ''),
+                user_data.get('development_goals', ''),
+                user_data.get('main_goal', ''),
+                user_data.get('special_notes', ''),
+                user_data.get('last_activity', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                'active'
+            ]])
+        except gspread.exceptions.CellNotFound:
+            # Добавляем нового клиента
+            worksheet.append_row([
+                user_data['user_id'],
+                user_data.get('telegram_username', ''),
+                user_data.get('first_name', ''),
+                user_data.get('start_date', datetime.now().strftime("%Y-%m-%d")),
+                user_data.get('wake_time', ''),
+                user_data.get('sleep_time', ''),
+                user_data.get('activity_preferences', ''),
+                user_data.get('diet_features', ''),
+                user_data.get('rest_preferences', ''),
+                user_data.get('morning_rituals', ''),
+                user_data.get('evening_rituals', ''),
+                user_data.get('personal_habits', ''),
+                user_data.get('medications', ''),
+                user_data.get('development_goals', ''),
+                user_data.get('main_goal', ''),
+                user_data.get('special_notes', ''),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'active'
+            ])
+        
+        logger.info(f"✅ Клиент {user_data['user_id']} сохранен в Google Sheets")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения клиента: {e}")
+        return False
+
+def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
+    """Сохраняет ежедневный отчет в Google Sheets"""
+    if not google_sheet:
+        return False
+    
+    try:
+        worksheet = google_sheet.worksheet("ежедневные_отчеты")
+        
+        # Получаем информацию о пользователе
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT username, first_name FROM clients WHERE user_id = ?", (user_id,))
+        user_info = c.fetchone()
+        conn.close()
+        
+        username = user_info[0] if user_info else ""
+        first_name = user_info[1] if user_info else ""
+        
+        worksheet.append_row([
+            user_id,
+            username,
+            first_name,
+            report_data.get('date', datetime.now().strftime("%Y-%m-%d")),
+            report_data.get('strategic_tasks_done', ''),
+            report_data.get('morning_rituals_done', ''),
+            report_data.get('evening_rituals_done', ''),
+            report_data.get('mood', ''),
+            report_data.get('energy', ''),
+            report_data.get('focus_level', ''),
+            report_data.get('motivation_level', ''),
+            report_data.get('problems', ''),
+            report_data.get('questions', ''),
+            report_data.get('what_went_well', ''),
+            report_data.get('key_achievements', ''),
+            report_data.get('what_to_improve', ''),
+            report_data.get('adjustments', ''),
+            report_data.get('water_intake', ''),
+            report_data.get('day_status', '')
+        ])
+        
+        logger.info(f"✅ Ежедневный отчет {user_id} сохранен в Google Sheets")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения отчета: {e}")
+        return False
+
+def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
+    """Получает план на день из Google Sheets"""
+    if not google_sheet:
+        return {}
+    
+    try:
+        worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
+        
+        # Ищем пользователя
+        try:
+            cell = worksheet.find(str(user_id))
+            row = cell.row
+        except gspread.exceptions.CellNotFound:
+            return {}
+        
+        # Получаем все данные строки
+        row_data = worksheet.row_values(row)
+        
+        # Определяем колонку для нужной даты
+        day = datetime.strptime(date, "%Y-%m-%d").day
+        date_column_index = 4 + day - 1  # 4 базовые колонки + день месяца
+        
+        if date_column_index >= len(row_data):
+            return {}
+        
+        plan_text = row_data[date_column_index]
+        
+        # Парсим структурированный текст плана
+        plan_data = parse_structured_plan(plan_text)
+        
+        return plan_data
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения плана: {e}")
+        return {}
+
+def parse_structured_plan(plan_text: str) -> Dict[str, Any]:
+    """Парсит структурированный текст плана на компоненты"""
+    if not plan_text:
+        return {}
+    
+    sections = {
+        'strategic_tasks': [],
+        'critical_tasks': [],
+        'priorities': [],
+        'advice': [],
+        'special_rituals': [],
+        'time_blocks': [],
+        'resources': [],
+        'expected_results': [],
+        'reminders': [],
+        'motivation_quote': ''
+    }
+    
+    current_section = None
+    
+    for line in plan_text.split('\n'):
+        line = line.strip()
+        
+        if not line:
+            continue
+            
+        # Определяем секции
+        if 'СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:' in line:
+            current_section = 'strategic_tasks'
+            continue
+        elif 'КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:' in line:
+            current_section = 'critical_tasks'
+            continue
+        elif 'ПРИОРИТЕТЫ ДНЯ:' in line:
+            current_section = 'priorities'
+            continue
+        elif 'СОВЕТЫ АССИСТЕНТА:' in line:
+            current_section = 'advice'
+            continue
+        elif 'СПЕЦИАЛЬНЫЕ РИТУАЛЫ:' in line:
+            current_section = 'special_rituals'
+            continue
+        elif 'ВРЕМЕННЫЕ БЛОКИ:' in line:
+            current_section = 'time_blocks'
+            continue
+        elif 'РЕСУРСЫ И МАТЕРИАЛЫ:' in line:
+            current_section = 'resources'
+            continue
+        elif 'ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ:' in line:
+            current_section = 'expected_results'
+            continue
+        elif 'ДОПОЛНИТЕЛЬНЫЕ НАПОМИНАНИЯ:' in line:
+            current_section = 'reminders'
+            continue
+        elif 'МОТИВАЦИОННАЯ ЦИТАТА:' in line:
+            current_section = 'motivation_quote'
+            continue
+            
+        # Добавляем данные в текущую секцию
+        if current_section and line.startswith('- '):
+            content = line[2:].strip()
+            if current_section == 'motivation_quote':
+                sections[current_section] = content
+            else:
+                sections[current_section].append(content)
+    
+    return sections
+
+# ========== ОБНОВЛЕННЫЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def save_user_info(user_id: int, username: str, first_name: str, last_name: Optional[str] = None):
-    """Сохраняет информацию о пользователе в базу данных"""
+    """Сохраняет информацию о пользователе в базу данных и Google Sheets"""
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
     registration_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -271,7 +525,18 @@ def save_user_info(user_id: int, username: str, first_name: str, last_name: Opti
               (user_id, username, first_name, last_name, 'active', registration_date, registration_date))
     conn.commit()
     conn.close()
-    logger.info(f"✅ Информация о пользователе {user_id} сохранена")
+    logger.info(f"✅ Информация о пользователе {user_id} сохранена в БД")
+    
+    # Сохраняем в Google Sheets
+    user_data = {
+        'user_id': user_id,
+        'telegram_username': username,
+        'first_name': first_name,
+        'last_name': last_name,
+        'start_date': registration_date,
+        'last_activity': registration_date
+    }
+    save_client_to_sheets(user_data)
 
 def update_user_activity(user_id: int):
     """Обновляет время последней активности пользователя"""
@@ -391,72 +656,6 @@ def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
     conn.close()
     logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
 
-def save_questionnaire_to_sheets(user_id: int, user_data: Dict[str, Any], assistant_name: str, answers: Dict[int, str]):
-    """Сохраняет анкету в Google Sheets"""
-    if not google_sheet:
-        return
-    
-    try:
-        worksheet = google_sheet.worksheet("Анкеты")
-        
-        row_data = [
-            user_id,
-            user_data.get('first_name', ''),
-            user_data.get('username', ''),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            assistant_name
-        ]
-        
-        for i in range(1, 31):
-            if i < len(QUESTIONS):
-                answer = answers.get(i, '')
-                if len(str(answer)) > 100:
-                    answer = str(answer)[:100] + "..."
-                row_data.append(answer)
-            else:
-                row_data.append('')
-        
-        worksheet.append_row(row_data)
-        logger.info(f"✅ Анкета пользователя {user_id} сохранена в Google Sheets")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения анкеты в Google Sheets: {e}")
-
-def save_plan_to_sheets(user_id: int, user_name: str, plan_data: Dict[str, Any]):
-    """Сохраняет план в Google Sheets"""
-    if not google_sheet:
-        return
-    
-    try:
-        worksheet = google_sheet.worksheet("Планы")
-        
-        row_data = [
-            user_id,
-            user_name,
-            plan_data.get('plan_date', ''),
-            'active',
-            plan_data.get('morning_ritual1', ''),
-            plan_data.get('morning_ritual2', ''),
-            plan_data.get('task1', ''),
-            plan_data.get('task2', ''),
-            plan_data.get('task3', ''),
-            plan_data.get('task4', ''),
-            plan_data.get('lunch_break', ''),
-            plan_data.get('evening_ritual1', ''),
-            plan_data.get('evening_ritual2', ''),
-            plan_data.get('advice', ''),
-            plan_data.get('sleep_time', ''),
-            plan_data.get('water_goal', ''),
-            plan_data.get('activity_goal', ''),
-            plan_data.get('notes', '')
-        ]
-        
-        worksheet.append_row(row_data)
-        logger.info(f"✅ План пользователя {user_id} сохранен в Google Sheets")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения плана в Google Sheets: {e}")
-
 # ========== GOOGLE SHEETS МЕНЕДЖЕР ==========
 
 class GoogleSheetsManager:
@@ -472,22 +671,16 @@ class GoogleSheetsManager:
             if not GOOGLE_SHEETS_AVAILABLE:
                 return None
                 
-            credentials_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-            if not credentials_json:
-                logger.warning("⚠️ GOOGLE_CREDENTIALS_JSON не найден")
+            if not GOOGLE_CREDENTIALS_JSON or not GOOGLE_SHEETS_ID:
+                logger.warning("⚠️ GOOGLE_CREDENTIALS_JSON или GOOGLE_SHEETS_ID не найден")
                 return None
             
-            creds_dict = json.loads(credentials_json)
+            creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
             scope = ['https://www.googleapis.com/auth/spreadsheets']
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             self.client = gspread.authorize(creds)
             
-            SPREADSHEET_ID = os.environ.get('GOOGLE_SHEETS_ID')
-            if not SPREADSHEET_ID:
-                logger.warning("⚠️ GOOGLE_SHEETS_ID не найден")
-                return None
-            
-            self.sheet = self.client.open_by_key(SPREADSHEET_ID)
+            self.sheet = self.client.open_by_key(GOOGLE_SHEETS_ID)
             logger.info("✅ Google Sheets менеджер подключен")
             return True
             
@@ -496,32 +689,38 @@ class GoogleSheetsManager:
             return None
     
     def save_daily_data(self, user_id: int, data_type: str, value: str) -> bool:
-        """Сохраняет ежедневные данные"""
+        """Сохраняет ежедневные данные в новую структуру"""
         try:
-            worksheet = self.sheet.worksheet("планы октябрь")
-            today = datetime.now().strftime("%d.%m.%Y")
+            worksheet = self.sheet.worksheet("ежедневные_отчеты")
+            today = datetime.now().strftime("%Y-%m-%d")
             
+            # Ищем существующую запись на сегодня
             records = worksheet.get_all_records()
             row_index = None
             
             for i, record in enumerate(records, start=2):
-                if (str(record.get('ID клиента', '')) == str(user_id) and 
+                if (str(record.get('id_клиента', '')) == str(user_id) and 
                     record.get('дата', '') == today):
                     row_index = i
                     break
             
             if not row_index:
+                # Создаем новую запись
                 user_info = self.get_user_info(user_id)
                 if not user_info:
                     return False
                 
-                new_row = [user_id, user_info['first_name'], today]
-                new_row.extend([""] * 17)
-                worksheet.append_row(new_row)
+                worksheet.append_row([
+                    user_id,
+                    user_info['username'],
+                    user_info['first_name'],
+                    today
+                ])
                 
+                # Получаем индекс новой строки
                 records = worksheet.get_all_records()
                 for i, record in enumerate(records, start=2):
-                    if (str(record.get('ID клиента', '')) == str(user_id) and 
+                    if (str(record.get('id_клиента', '')) == str(user_id) and 
                         record.get('дата', '') == today):
                         row_index = i
                         break
@@ -529,30 +728,18 @@ class GoogleSheetsManager:
             if not row_index:
                 return False
             
+            # Обновляем соответствующую колонку
             column_mapping = {
-                'настроение': 12,
-                'самочувствие': 13,
-                'водный_баланс': 14,
-                'привычки': 15,
-                'лекарства': 16,
-                'развитие': 17,
-                'прогресс': 18,
-                'примечание': 19,
-                'баланс': 11,
-                'напоминание': 20
+                'настроение': 8,
+                'энергия': 9,
+                'уровень_фокуса': 10,
+                'уровень_мотивации': 11,
+                'водный_баланс': 18
             }
             
             if data_type in column_mapping:
                 col_index = column_mapping[data_type]
-                cell = worksheet.cell(row_index, col_index)
-                
-                current_value = cell.value or ""
-                if current_value:
-                    new_value = f"{current_value}\n{datetime.now().strftime('%H:%M')}: {value}"
-                else:
-                    new_value = f"{datetime.now().strftime('%H:%M')}: {value}"
-                
-                worksheet.update_cell(row_index, col_index, new_value)
+                worksheet.update_cell(row_index, col_index, value)
                 logger.info(f"✅ Данные сохранены в Google Sheets: {user_id} - {data_type}")
                 return True
             
@@ -566,12 +753,12 @@ class GoogleSheetsManager:
         """Получает информацию о пользователе"""
         conn = sqlite3.connect('clients.db')
         c = conn.cursor()
-        c.execute("SELECT first_name, username FROM clients WHERE user_id = ?", (user_id,))
+        c.execute("SELECT username, first_name FROM clients WHERE user_id = ?", (user_id,))
         result = c.fetchone()
         conn.close()
         
         if result:
-            return {'first_name': result[0], 'username': result[1]}
+            return {'username': result[0], 'first_name': result[1]}
         return None
 
 sheets_manager = GoogleSheetsManager()
@@ -933,12 +1120,27 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
     user = update.effective_user
     assistant_name = context.user_data['assistant_name']
     
-    if google_sheet:
-        user_data = {
-            'first_name': user.first_name,
-            'username': user.username
-        }
-        save_questionnaire_to_sheets(user.id, user_data, assistant_name, context.user_data['answers'])
+    # Сохраняем данные анкеты в Google Sheets
+    user_data = {
+        'user_id': user.id,
+        'telegram_username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'start_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'main_goal': context.user_data['answers'].get(1, ''),
+        'motivation': context.user_data['answers'].get(2, ''),
+        'wake_time': context.user_data['answers'].get(5, ''),
+        'sleep_time': context.user_data['answers'].get(5, ''),
+        'activity_preferences': context.user_data['answers'].get(10, ''),
+        'diet_features': context.user_data['answers'].get(14, ''),
+        'rest_preferences': context.user_data['answers'].get(18, ''),
+        'morning_rituals': context.user_data['answers'].get(22, ''),
+        'evening_rituals': context.user_data['answers'].get(22, ''),
+        'personal_habits': context.user_data['answers'].get(22, ''),
+        'development_goals': context.user_data['answers'].get(1, ''),
+        'special_notes': context.user_data['answers'].get(29, '')
+    }
+    save_client_to_sheets(user_data)
     
     questionnaire = f"📋 Новая анкета от пользователя:\n\n"
     questionnaire += f"👤 ID: {user.id}\n"
@@ -1015,22 +1217,50 @@ async def plan_command(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    await update.message.reply_text(
-        "📋 Ваш персональный план на сегодня:\n\n"
-        "🕘 Утро (8:00 - 12:00):\n"
-        "• 🏃 Зарядка и контрастный душ - 20 мин\n"
-        "• 🍳 Полезный завтрак - 30 мин\n"
-        "• 🎯 Работа над главной задачей - 3 часа\n\n"
-        "🕐 День (12:00 - 18:00):\n"
-        "• 🥗 Обед и отдых - 1 час\n"
-        "• 📚 Обучение и развитие - 2 часа\n"
-        "• 💼 Второстепенные задачи - 2 часа\n\n"
-        "🕢 Вечер (18:00 - 22:00):\n"
-        "• 🏋️ Тренировка - 1 час\n"
-        "• 🍲 Ужин - 30 мин\n"
-        "• 📖 Чтение и планирование - 1 час\n\n"
-        "💡 Для корректировки плана напишите ассистенту!"
-    )
+    # Получаем план из Google Sheets
+    today = datetime.now().strftime("%Y-%m-%d")
+    plan_data = get_daily_plan_from_sheets(user_id, today)
+    
+    if not plan_data:
+        await update.message.reply_text(
+            "📋 Индивидуальный план еще не готов.\n\n"
+            "Наш ассистент анализирует вашу анкету и скоро составит для вас "
+            "персональный план. Обычно это занимает до 24 часов.\n\n"
+            "А пока вы можете посмотреть общий план: /plan"
+        )
+        return
+    
+    # Формируем сообщение с планом
+    plan_text = f"📋 Ваш индивидуальный план на {today}:\n\n"
+    
+    if plan_data.get('strategic_tasks'):
+        plan_text += "🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
+        for task in plan_data['strategic_tasks']:
+            plan_text += f"• {task}\n"
+        plan_text += "\n"
+    
+    if plan_data.get('critical_tasks'):
+        plan_text += "⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
+        for task in plan_data['critical_tasks']:
+            plan_text += f"• {task}\n"
+        plan_text += "\n"
+    
+    if plan_data.get('priorities'):
+        plan_text += "🎯 ПРИОРИТЕТЫ ДНЯ:\n"
+        for priority in plan_data['priorities']:
+            plan_text += f"• {priority}\n"
+        plan_text += "\n"
+    
+    if plan_data.get('advice'):
+        plan_text += "💡 СОВЕТЫ АССИСТЕНТА:\n"
+        for advice in plan_data['advice']:
+            plan_text += f"• {advice}\n"
+        plan_text += "\n"
+    
+    if plan_data.get('motivation_quote'):
+        plan_text += f"💫 МОТИВАЦИЯ: {plan_data['motivation_quote']}\n"
+    
+    await update.message.reply_text(plan_text)
 
 async def progress_command(update: Update, context: CallbackContext):
     """Показывает статистику прогресса"""
@@ -1232,6 +1462,13 @@ async def mood_command(update: Update, context: CallbackContext):
         }
         save_progress_to_db(user_id, progress_data)
         
+        # Сохраняем в Google Sheets
+        report_data = {
+            'date': datetime.now().strftime("%Y-%m-%d"),
+            'mood': mood
+        }
+        save_daily_report_to_sheets(user_id, report_data)
+        
         sheets_manager.save_daily_data(user_id, "настроение", f"{mood}/10")
         
         mood_responses = {
@@ -1279,7 +1516,14 @@ async def energy_command(update: Update, context: CallbackContext):
         }
         save_progress_to_db(user_id, progress_data)
         
-        sheets_manager.save_daily_data(user_id, "самочувствие", f"{energy}/10")
+        # Сохраняем в Google Sheets
+        report_data = {
+            'date': datetime.now().strftime("%Y-%m-%d"),
+            'energy': energy
+        }
+        save_daily_report_to_sheets(user_id, report_data)
+        
+        sheets_manager.save_daily_data(user_id, "энергия", f"{energy}/10")
         
         energy_responses = {
             1: "💤 Важно отдыхать! Может, стоит сделать перерыв?",
@@ -1323,6 +1567,13 @@ async def water_command(update: Update, context: CallbackContext):
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
         save_progress_to_db(user_id, progress_data)
+        
+        # Сохраняем в Google Sheets
+        report_data = {
+            'date': datetime.now().strftime("%Y-%m-%d"),
+            'water_intake': water
+        }
+        save_daily_report_to_sheets(user_id, report_data)
         
         sheets_manager.save_daily_data(user_id, "водный_баланс", f"{water} стаканов")
         
@@ -1594,7 +1845,6 @@ async def set_plan_command(update: Update, context: CallbackContext):
         }
         
         save_user_plan_to_db(user_id, plan_data)
-        save_plan_to_sheets(user_id, user_name, plan_data)
         
         try:
             await context.bot.send_message(
@@ -1818,22 +2068,32 @@ def main():
         application.add_handler(CallbackQueryHandler(button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
         
-        # Настройка JobQueue
+        # Настройка JobQueue для автоматических сообщений
         try:
             job_queue = application.job_queue
             if job_queue:
+                # Удаляем старые задачи
                 current_jobs = job_queue.jobs()
                 for job in current_jobs:
                     job.schedule_removal()
                 
+                # Утреннее сообщение в 6:00
                 job_queue.run_daily(
-                    lambda ctx: logger.info("✅ Ежедневная проверка..."),
-                    time=dt_time(hour=6, minute=0),
+                    callback=send_morning_plan,
+                    time=dt_time(hour=3, minute=0),  # 6:00 MSK (UTC+3)
                     days=tuple(range(7)),
-                    name="daily_check"
+                    name="morning_plan"
                 )
                 
-                logger.info("✅ JobQueue настроен")
+                # Вечерний опрос в 21:00
+                job_queue.run_daily(
+                    callback=send_evening_survey,
+                    time=dt_time(hour=18, minute=0),  # 21:00 MSK (UTC+3)
+                    days=tuple(range(7)),
+                    name="evening_survey"
+                )
+                
+                logger.info("✅ JobQueue настроен для автоматических сообщений")
                 
         except Exception as e:
             logger.error(f"❌ Ошибка настройки JobQueue: {e}")
@@ -1843,6 +2103,106 @@ def main():
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
+
+async def send_morning_plan(context: CallbackContext):
+    """Отправляет утренний план пользователям"""
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT user_id, first_name, username FROM clients WHERE status = 'active'")
+        users = c.fetchall()
+        conn.close()
+        
+        for user in users:
+            user_id, first_name, username = user
+            today = datetime.now().strftime("%Y-%m-%d")
+            
+            # Получаем план из Google Sheets
+            plan_data = get_daily_plan_from_sheets(user_id, today)
+            
+            if plan_data:
+                # Формируем сообщение
+                message = f"🌅 Доброе утро, {first_name}!\n\n"
+                message += "📋 Ваш план на сегодня:\n\n"
+                
+                if plan_data.get('strategic_tasks'):
+                    message += "🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
+                    for task in plan_data['strategic_tasks']:
+                        message += f"• {task}\n"
+                    message += "\n"
+                
+                if plan_data.get('critical_tasks'):
+                    message += "⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
+                    for task in plan_data['critical_tasks']:
+                        message += f"• {task}\n"
+                    message += "\n"
+                
+                if plan_data.get('priorities'):
+                    message += "🎯 ПРИОРИТЕТЫ ДНЯ:\n"
+                    for priority in plan_data['priorities']:
+                        message += f"• {priority}\n"
+                    message += "\n"
+                
+                if plan_data.get('advice'):
+                    message += "💡 СОВЕТЫ АССИСТЕНТА:\n"
+                    for advice in plan_data['advice']:
+                        message += f"• {advice}\n"
+                    message += "\n"
+                
+                if plan_data.get('motivation_quote'):
+                    message += f"💫 МОТИВАЦИЯ: {plan_data['motivation_quote']}\n\n"
+                
+                message += "💪 Удачи в достижении ваших целей!"
+                
+                try:
+                    await context.bot.send_message(chat_id=user_id, text=message)
+                    logger.info(f"✅ Утренний план отправлен пользователю {user_id}")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки утреннего плана пользователю {user_id}: {e}")
+                    
+    except Exception as e:
+        logger.error(f"❌ Ошибка в send_morning_plan: {e}")
+
+async def send_evening_survey(context: CallbackContext):
+    """Отправляет вечерний опрос пользователям"""
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT user_id, first_name FROM clients WHERE status = 'active'")
+        users = c.fetchall()
+        conn.close()
+        
+        for user in users:
+            user_id, first_name = user
+            
+            message = (
+                f"🌙 Добрый вечер, {first_name}!\n\n"
+                "📊 Как прошел ваш день?\n\n"
+                "Пожалуйста, ответьте на несколько вопросов:\n\n"
+                "1. 🎯 Выполнили стратегические задачи? (да/нет/частично)\n"
+                "2. 🌅 Выполнили утренние ритуалы? (да/нет/частично)\n"
+                "3. 🌙 Выполнили вечерние ритуалы? (да/нет/частично)\n"
+                "4. 😊 Настроение от 1 до 10?\n"
+                "5. ⚡ Энергия от 1 до 10?\n"
+                "6. 🎯 Уровень фокуса от 1 до 10?\n"
+                "7. 🔥 Уровень мотивации от 1 до 10?\n"
+                "8. 🏆 Ключевые достижения сегодня?\n"
+                "9. 🚧 Были проблемы или препятствия?\n"
+                "10. 🌟 Что получилось хорошо?\n"
+                "11. 📈 Что можно улучшить?\n"
+                "12. 🔄 Корректировки на завтра?\n"
+                "13. 💧 Сколько воды выпили? (стаканов)\n\n"
+                "Отправьте ответы в свободной форме 📝"
+            )
+            
+            try:
+                await context.bot.send_message(chat_id=user_id, text=message)
+                logger.info(f"✅ Вечерний опрос отправлен пользователю {user_id}")
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки вечернего опроса пользователю {user_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"❌ Ошибка в send_evening_survey: {e}")
 
 if __name__ == '__main__':
     main()
