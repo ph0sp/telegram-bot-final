@@ -222,7 +222,7 @@ def init_google_sheets():
         # Создаем листы если их нет
         try:
             sheet.worksheet("клиенты_детали")
-        except gspread.WorksheetNotFound:
+        except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title="клиенты_детали", rows=1000, cols=20)
             worksheet.append_row([
                 "id_клиента", "telegram_username", "имя", "старт_работы",
@@ -236,7 +236,7 @@ def init_google_sheets():
         
         try:
             sheet.worksheet("индивидуальные_планы_месяц")
-        except gspread.WorksheetNotFound:
+        except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title="индивидуальные_планы_месяц", rows=1000, cols=40)
             # Базовые колонки
             headers = ["id_клиента", "telegram_username", "имя", "месяц"]
@@ -248,7 +248,7 @@ def init_google_sheets():
         
         try:
             sheet.worksheet("ежедневные_отчеты")
-        except gspread.WorksheetNotFound:
+        except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title="ежедневные_отчеты", rows=1000, cols=20)
             worksheet.append_row([
                 "id_клиента", "telegram_username", "имя", "дата",
@@ -262,7 +262,7 @@ def init_google_sheets():
         
         try:
             sheet.worksheet("статистика_месяца")
-        except gspread.WorksheetNotFound:
+        except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title="статистика_месяца", rows=1000, cols=20)
             worksheet.append_row([
                 "id_клиента", "telegram_username", "имя", "месяц",
@@ -277,7 +277,7 @@ def init_google_sheets():
         
         try:
             sheet.worksheet("админ_панель")
-        except gspread.WorksheetNotFound:
+        except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title="админ_панель", rows=1000, cols=10)
             worksheet.append_row([
                 "id_клиента", "telegram_username", "имя", "текущий_статус",
@@ -299,11 +299,13 @@ google_sheet = init_google_sheets()
 def save_client_to_sheets(user_data: Dict[str, Any]):
     """Сохраняет клиента в лист 'клиенты_детали'"""
     if not google_sheet:
-        logger.warning("Google Sheets не доступен")
+        logger.error("❌ Google Sheets не доступен - google_sheet is None")
         return False
     
     try:
+        logger.info(f"🔄 Попытка сохранить данные пользователя {user_data['user_id']} в Google Sheets")
         worksheet = google_sheet.worksheet("клиенты_детали")
+        logger.info("✅ Лист 'клиенты_детали' найден")
         
         # Ищем существующего клиента
         try:
@@ -330,7 +332,9 @@ def save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('last_activity', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                 'active'
             ]])
-        except gspread.exceptions.CellNotFound:
+            logger.info(f"✅ Данные пользователя {user_data['user_id']} обновлены в Google Sheets")
+        except Exception as e:
+            logger.info(f"👤 Пользователь {user_data['user_id']} не найден, создаем новую запись: {e}")
             # Добавляем нового клиента
             worksheet.append_row([
                 user_data['user_id'],
@@ -352,17 +356,19 @@ def save_client_to_sheets(user_data: Dict[str, Any]):
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'active'
             ])
+            logger.info(f"✅ Новый пользователь {user_data['user_id']} добавлен в Google Sheets")
         
         logger.info(f"✅ Клиент {user_data['user_id']} сохранен в Google Sheets")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Ошибка сохранения клиента: {e}")
+        logger.error(f"❌ Ошибка сохранения клиента в Google Sheets: {e}")
         return False
 
 def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
     """Сохраняет ежедневный отчет в Google Sheets"""
     if not google_sheet:
+        logger.error("❌ Google Sheets не доступен")
         return False
     
     try:
@@ -419,7 +425,7 @@ def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
         try:
             cell = worksheet.find(str(user_id))
             row = cell.row
-        except gspread.exceptions.CellNotFound:
+        except Exception:
             return {}
         
         # Получаем все данные строки
@@ -536,7 +542,11 @@ def save_user_info(user_id: int, username: str, first_name: str, last_name: Opti
         'start_date': registration_date,
         'last_activity': registration_date
     }
-    save_client_to_sheets(user_data)
+    success = save_client_to_sheets(user_data)
+    if success:
+        logger.info(f"✅ Данные пользователя {user_id} сохранены в Google Sheets")
+    else:
+        logger.error(f"❌ Ошибка сохранения данных пользователя {user_id} в Google Sheets")
 
 def update_user_activity(user_id: int):
     """Обновляет время последней активности пользователя"""
@@ -1140,7 +1150,13 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
         'development_goals': context.user_data['answers'].get(1, ''),
         'special_notes': context.user_data['answers'].get(29, '')
     }
-    save_client_to_sheets(user_data)
+    
+    logger.info(f"🔄 Сохранение данных анкеты пользователя {user.id} в Google Sheets")
+    success = save_client_to_sheets(user_data)
+    if success:
+        logger.info(f"✅ Данные анкеты пользователя {user.id} успешно сохранены в Google Sheets")
+    else:
+        logger.error(f"❌ Ошибка сохранения данных анкеты пользователя {user.id} в Google Sheets")
     
     questionnaire = f"📋 Новая анкета от пользователя:\n\n"
     questionnaire += f"👤 ID: {user.id}\n"
