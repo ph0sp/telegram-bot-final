@@ -4,6 +4,7 @@ import sqlite3
 import asyncio
 import time
 import json
+import re
 from datetime import datetime, time as dt_time, timedelta
 from typing import Dict, Optional, Any, List
 
@@ -91,7 +92,7 @@ QUESTIONS = [
     "Как часто вам удается выделять время на эти занятия?",
     "Планируете ли вы выходные дни или микро-перерывы в течение дня?",
     "Важно ли для вас время на общение с семьей/друзьями? Сколько раз в неделю вы бы хотели это видеть в своем плане?",
-    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режима, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалов вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
+    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режима, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалы вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
     "Отлично, остался заключительный блок.\n\nБлок 7: Финальные Уточнения и Гибкость\n\nКакой ваш идеальный баланс между продуктивностью и отдыхом? (например, 70/30, 60/40)",
     "Что чаще всего мешает вам следовать планам? (неожиданные дела, лень, отсутствие мотивации)",
     "Как нам лучше всего предусмотреть дни непредвиденных обстоятельств или дни с низкой энергией? (Например, запланировать 1-2 таких дня в неделю)"
@@ -170,17 +171,17 @@ def init_db():
                   message_date TEXT,
                   direction TEXT)''')
     
-    # Таблица настроек напоминаний
-    c.execute('''CREATE TABLE IF NOT EXISTS reminder_settings
-                 (user_id INTEGER PRIMARY KEY,
-                  morning_rituals BOOLEAN DEFAULT 0,
-                  evening_rituals BOOLEAN DEFAULT 0, 
-                  medications BOOLEAN DEFAULT 0,
-                  water BOOLEAN DEFAULT 0,
-                  activity BOOLEAN DEFAULT 0,
-                  rest BOOLEAN DEFAULT 0,
-                  progress_check BOOLEAN DEFAULT 0,
-                  created_date TEXT)''')
+    # Таблица напоминаний (новая структура)
+    c.execute('''CREATE TABLE IF NOT EXISTS user_reminders
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER,
+                  reminder_text TEXT,
+                  reminder_time TEXT,
+                  days_of_week TEXT,
+                  reminder_type TEXT,
+                  is_active BOOLEAN DEFAULT 1,
+                  created_date TEXT,
+                  FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
     
     conn.commit()
     conn.close()
@@ -295,7 +296,7 @@ def init_google_sheets():
                 "следующий_чекап", "приоритет", "заметки_ассистента"
             ])
         
-        logger.info("✅ Google Sheets инициализирован с новой структурой")
+        logger.info("✅ Google Sheets инициализирован с новой структураой")
         return sheet
     
     except Exception as e:
@@ -822,7 +823,7 @@ def get_favorite_ritual(user_id: int) -> str:
         elif "планирование" in rituals_text.lower():
             return "Планирование задач"
     
-    return "Утренняя зарядка"  # Ритуал по умолчанию
+    return "на основе ваших предпочтений"
 
 def save_extended_user_data(user_id: int, extended_data: Dict[str, Any]):
     """Сохраняет расширенные данные пользователя в Google Sheets"""
@@ -860,6 +861,267 @@ def save_extended_user_data(user_id: int, extended_data: Dict[str, Any]):
         
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения расширенных данных: {e}")
+        return False
+
+# ========== НОВЫЕ ФУНКЦИИ ДЛЯ ПРОФИЛЯ ==========
+
+def get_user_usage_days(user_id: int) -> Dict[str, int]:
+    """Возвращает статистику дней использования"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Дни с регистрации
+    c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
+    reg_result = c.fetchone()
+    if not reg_result:
+        conn.close()
+        return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+    
+    reg_date = datetime.strptime(reg_result[0], "%Y-%m-%d %H:%M:%S").date()
+    days_since_registration = (datetime.now().date() - reg_date).days + 1
+    
+    # Активные дни (когда был прогресс)
+    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+    active_days = c.fetchone()[0] or 0
+    
+    # Текущая серия
+    current_streak = get_user_activity_streak(user_id)
+    
+    conn.close()
+    
+    return {
+        'days_since_registration': days_since_registration,
+        'active_days': active_days,
+        'current_day': active_days if active_days > 0 else 1,  # Текущий день использования
+        'current_streak': current_streak
+    }
+
+def get_user_balance(user_id: int) -> str:
+    """Получает баланс работа/отдых из анкеты"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 25", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    
+    # Если в ответе есть цифры, извлекаем их
+    if result and result[0]:
+        answer = result[0]
+        # Ищем паттерн типа "60/40" в тексте
+        match = re.search(r'(\d+)[/\s]+\s*(\d+)', answer)
+        if match:
+            return f"{match.group(1)}/{match.group(2)}"
+    
+    return "60/40"  # Значение по умолчанию
+
+def get_most_productive_day(user_id: int) -> str:
+    """Определяет самый продуктивный день (только при наличии данных)"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Проверяем, есть ли достаточно данных
+    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+    if c.fetchone()[0] < 7:  # Меньше недели данных
+        conn.close()
+        return "еще не определен"
+    
+    # Здесь можно добавить логику определения продуктивного дня по данным
+    # Пока вернем заглушку
+    conn.close()
+    return "понедельник"
+
+# ========== НОВАЯ СИСТЕМА НАПОМИНАНИЙ ==========
+
+def parse_time_input(time_text: str) -> Dict[str, Any]:
+    """Парсит различные форматы времени"""
+    time_text = time_text.lower().strip()
+    
+    # Словарь для преобразования
+    time_mapping = {
+        'утром': '08:00',
+        'утро': '08:00',
+        'утра': '08:00',
+        'днем': '13:00', 
+        'день': '13:00',
+        'вечером': '20:00',
+        'вечер': '20:00',
+        'ночью': '22:00',
+        'ночь': '22:00',
+        'в обед': '13:00',
+        'перед сном': '22:00',
+        'после работы': '18:00',
+        'в полдень': '12:00'
+    }
+    
+    # Если есть точное время с :
+    if ':' in time_text:
+        # Обработка "9:00", "21:30" и т.д.
+        try:
+            time_str = time_text.split()[0]  # Берем первую часть до пробела
+            datetime.strptime(time_str, "%H:%M")
+            return {'time': time_str, 'type': 'exact'}
+        except ValueError:
+            pass
+    
+    # Если относительное время
+    if time_text in time_mapping:
+        return {'time': time_mapping[time_text], 'type': 'relative'}
+    
+    # Если "9 утра", "7 вечера" и т.д.
+    time_match = re.search(r'(\d+)\s+(утра|вечера|ночи)', time_text)
+    if time_match:
+        hour = int(time_match.group(1))
+        period = time_match.group(2)
+        
+        if period == 'утра':
+            return {'time': f"{hour:02d}:00", 'type': '12h'}
+        elif period == 'вечера' and hour < 12:
+            return {'time': f"{hour + 12:02d}:00", 'type': '12h'}
+        elif period == 'ночи':
+            return {'time': f"{hour:02d}:00", 'type': '12h'}
+    
+    # Если "через X часов/минут"
+    future_match = re.search(r'через\s+(\d+)\s*(час|часа|часов|минут|минуты)', time_text)
+    if future_match:
+        amount = int(future_match.group(1))
+        unit = future_match.group(2)
+        
+        now = datetime.now()
+        if 'час' in unit:
+            future_time = now + timedelta(hours=amount)
+        else:
+            future_time = now + timedelta(minutes=amount)
+        
+        return {'time': future_time.strftime("%H:%M"), 'type': 'future'}
+    
+    return None
+
+def detect_reminder_type(message_text: str) -> str:
+    """Определяет тип напоминания по тексту"""
+    text = message_text.lower()
+    
+    # Ключевые слова для регулярных напоминаний
+    regular_keywords = ['каждый', 'каждое', 'ежедневно', 'регулярно', 'по', 'каждую', 'напоминай']
+    days_keywords = ['понедельник', 'вторник', 'сред', 'четверг', 'пятниц', 'суббот', 'воскресенье']
+    
+    # Если есть слова "каждый" или дни недели - это регулярное напоминание
+    if any(keyword in text for keyword in regular_keywords + days_keywords):
+        return 'regular'
+    else:
+        return 'once'
+
+def parse_reminder_text(text: str) -> Dict[str, Any]:
+    """Парсит текст напоминания и возвращает структурированные данные"""
+    text_lower = text.lower()
+    
+    # Определяем тип напоминания
+    reminder_type = detect_reminder_type(text)
+    
+    # Извлекаем время
+    time_match = re.search(r'(\d{1,2}:\d{2})|(\d+\s+(утра|вечера|ночи))|(утром|днем|вечером|ночью)', text_lower)
+    time_data = None
+    
+    if time_match:
+        time_text = time_match.group(0)
+        time_data = parse_time_input(time_text)
+    
+    # Извлекаем текст напоминания (убираем ключевые слова и время)
+    reminder_text = text_lower
+    keywords = ['напомни', 'напоминай', 'мне', 'в', 'каждый', 'каждое', 'ежедневно']
+    for keyword in keywords:
+        reminder_text = reminder_text.replace(keyword, '')
+    
+    if time_match:
+        reminder_text = reminder_text.replace(time_match.group(0), '')
+    
+    reminder_text = reminder_text.strip()
+    
+    # Извлекаем дни недели для регулярных напоминаний
+    days_of_week = []
+    if reminder_type == 'regular':
+        days_map = {
+            'понедельник': 'пн', 'вторник': 'вт', 'сред': 'ср', 'четверг': 'чт',
+            'пятниц': 'пт', 'суббот': 'сб', 'воскресенье': 'вс'
+        }
+        
+        for day_full, day_short in days_map.items():
+            if day_full in text_lower:
+                days_of_week.append(day_short)
+        
+        # Если дни не указаны, значит ежедневно
+        if not days_of_week and 'каждый день' in text_lower:
+            days_of_week = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+    
+    return {
+        'type': reminder_type,
+        'time': time_data['time'] if time_data else '09:00',  # По умолчанию
+        'text': reminder_text,
+        'days': days_of_week if days_of_week else ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'],
+        'original_text': text
+    }
+
+def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
+    """Добавляет напоминание в базу данных"""
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        days_str = ','.join(reminder_data['days']) if reminder_data['days'] else 'ежедневно'
+        created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        c.execute('''INSERT INTO user_reminders 
+                     (user_id, reminder_text, reminder_time, days_of_week, reminder_type, created_date)
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (user_id, reminder_data['text'], reminder_data['time'], 
+                   days_str, reminder_data['type'], created_date))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"✅ Напоминание добавлено для пользователя {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка добавления напоминания: {e}")
+        return False
+
+def get_user_reminders(user_id: int) -> List[Dict]:
+    """Возвращает список напоминаний пользователя"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    c.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
+                 FROM user_reminders 
+                 WHERE user_id = ? AND is_active = 1 
+                 ORDER BY created_date DESC''', (user_id,))
+    
+    reminders = []
+    for row in c.fetchall():
+        reminders.append({
+            'id': row[0],
+            'text': row[1],
+            'time': row[2],
+            'days': row[3],
+            'type': row[4]
+        })
+    
+    conn.close()
+    return reminders
+
+def delete_reminder_from_db(reminder_id: int) -> bool:
+    """Удаляет напоминание по ID"""
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"✅ Напоминание {reminder_id} удалено")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
 # ========== GOOGLE SHEETS МЕНЕДЖЕР ==========
@@ -969,271 +1231,6 @@ class GoogleSheetsManager:
 
 sheets_manager = GoogleSheetsManager()
 
-# ========== СИСТЕМА НАПОМИНАНИЙ ==========
-
-class SmartReminderSystem:
-    def __init__(self, application):
-        self.application = application
-        self.reminder_settings = {}
-        self.active_reminders = {}
-    
-    def load_user_settings(self, user_id: int) -> Dict[str, bool]:
-        """Загружает настройки напоминаний пользователя"""
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        
-        c.execute("SELECT * FROM reminder_settings WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        
-        if result:
-            settings = {
-                'morning_rituals': bool(result[1]),
-                'evening_rituals': bool(result[2]),
-                'medications': bool(result[3]),
-                'water': bool(result[4]),
-                'activity': bool(result[5]),
-                'rest': bool(result[6]),
-                'progress_check': bool(result[7])
-            }
-        else:
-            settings = {
-                'morning_rituals': False,
-                'evening_rituals': False,
-                'medications': False, 
-                'water': False,
-                'activity': False,
-                'rest': False,
-                'progress_check': False
-            }
-        
-        conn.close()
-        return settings
-    
-    def save_user_settings(self, user_id: int, settings: Dict[str, bool]):
-        """Сохраняет настройки напоминаний"""
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        
-        c.execute('''INSERT OR REPLACE INTO reminder_settings 
-                     (user_id, morning_rituals, evening_rituals, medications, 
-                      water, activity, rest, progress_check, created_date)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (user_id, settings['morning_rituals'], settings['evening_rituals'],
-                   settings['medications'], settings['water'], settings['activity'],
-                   settings['rest'], settings['progress_check'], 
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        
-        conn.commit()
-        conn.close()
-    
-    async def setup_reminders(self, update: Update, context: CallbackContext):
-        """Настройка автоматических напоминаний"""
-        user_id = update.effective_user.id
-        
-        settings = self.load_user_settings(user_id)
-        context.user_data['reminder_settings'] = settings
-        context.user_data['reminder_setup_step'] = 0
-        
-        await update.message.reply_text(
-            "🔔 Давайте настроим автоматические напоминания!\n\n"
-            "Я могу напоминать вам о важных вещах в течение дня.\n\n"
-            "Отвечайте 'да' или 'нет' на каждый пункт.\n\n"
-            "Начнем? Нужны ли вам напоминания об утренних ритуалах в 8:00?"
-        )
-        
-        return "REMINDER_SETUP"
-    
-    async def handle_reminder_setup(self, update: Update, context: CallbackContext):
-        """Обрабатывает ответы при настройке напоминаний"""
-        user_id = update.effective_user.id
-        user_response = update.message.text.lower()
-        settings = context.user_data['reminder_settings']
-        step = context.user_data['reminder_setup_step']
-        
-        reminder_types = [
-            ('morning_rituals', "утренних ритуалах", "вечерних ритуалах в 21:00?"),
-            ('evening_rituals', "вечерних ритуалах", "приеме лекарств/витаминов в 9:00 и 20:00?"),
-            ('medications', "приеме лекарств", "питье воды (4 раза в день)?"),
-            ('water', "питье воды", "физической активности в 11:00?"),
-            ('activity', "физической активности", "отдыхе и перерывах в 15:00?"),
-            ('rest', "отдыхе", "проверке прогресса по целям в 19:00?"),
-            ('progress_check', "проверке прогресса", "настройка завершена!")
-        ]
-        
-        if step < len(reminder_types):
-            current_type, current_text, next_text = reminder_types[step]
-            
-            if user_response in ['да', 'yes', 'нужно', 'хочу']:
-                settings[current_type] = True
-                response = "✅ Хорошо, буду напоминать!"
-            elif user_response in ['нет', 'no', 'не нужно', 'не надо']:
-                settings[current_type] = False
-                response = "❌ Хорошо, не буду напоминать."
-            else:
-                await update.message.reply_text("Пожалуйста, ответьте 'да' или 'нет'")
-                return "REMINDER_SETUP"
-            
-            context.user_data['reminder_setup_step'] += 1
-            
-            if step + 1 < len(reminder_types):
-                next_type, next_text, after_text = reminder_types[step + 1]
-                await update.message.reply_text(
-                    f"{response}\n\nНужны ли вам напоминания о {after_text}"
-                )
-            else:
-                self.save_user_settings(user_id, settings)
-                self.schedule_reminders(user_id, settings)
-                
-                enabled_reminders = [rt[1] for rt in reminder_types if settings[rt[0]]]
-                
-                if enabled_reminders:
-                    reminders_text = "\n".join([f"• {reminder}" for reminder in enabled_reminders])
-                    await update.message.reply_text(
-                        f"🎉 Напоминания настроены!\n\n"
-                        f"Я буду напоминать вам о:\n{reminders_text}\n\n"
-                        f"Вы всегда можете изменить настройки: /reminder_settings"
-                    )
-                else:
-                    await update.message.reply_text(
-                        "❌ Автоматические напоминания отключены.\n\n"
-                        "Вы можете настроить их позже: /reminder_settings"
-                    )
-                
-                return ConversationHandler.END
-        
-        return "REMINDER_SETUP"
-    
-    def schedule_reminders(self, user_id: int, settings: Dict[str, bool]):
-        """Планирует автоматические напоминания"""
-        reminder_times = {
-            'morning_rituals': [(8, 0)],
-            'evening_rituals': [(21, 0)],
-            'medications': [(9, 0), (20, 0)],
-            'water': [(10, 0), (13, 0), (16, 0), (19, 0)],
-            'activity': [(11, 0)],
-            'rest': [(15, 0)],
-            'progress_check': [(19, 0)]
-        }
-        
-        reminder_texts = {
-            'morning_rituals': "🌅 Время для утренних ритуалов! Начните день с энергии!",
-            'evening_rituals': "🌙 Время для вечерних ритуалов! Подготовьтесь к спокойному сну.",
-            'medications': "💊 Время принять лекарства/витамины!",
-            'water': "💧 Время выпить стакан воды! Поддерживайте водный баланс.",
-            'activity': "🏃 Время для физической активности! Подвигайтесь немного.",
-            'rest': "☕ Время для отдыха! Сделайте перерыв и восстановите силы.",
-            'progress_check': "📊 Время проверить прогресс по целям! Что удалось сегодня?"
-        }
-        
-        for job_name in list(self.active_reminders.keys()):
-            if job_name.startswith(f"auto_{user_id}_"):
-                try:
-                    job = self.application.job_queue.get_jobs_by_name(job_name)
-                    if job:
-                        job[0].schedule_removal()
-                    del self.active_reminders[job_name]
-                except:
-                    pass
-        
-        for reminder_type, enabled in settings.items():
-            if enabled and reminder_type in reminder_times:
-                for time_tuple in reminder_times[reminder_type]:
-                    hour, minute = time_tuple
-                    
-                    job_name = f"auto_{user_id}_{reminder_type}_{hour}_{minute}"
-                    
-                    try:
-                        self.application.job_queue.run_daily(
-                            callback=self.send_auto_reminder,
-                            time=dt_time(hour=hour-3, minute=minute),
-                            days=tuple(range(7)),
-                            name=job_name,
-                            data={'user_id': user_id, 'text': reminder_texts[reminder_type]}
-                        )
-                        
-                        self.active_reminders[job_name] = {
-                            'user_id': user_id,
-                            'type': reminder_type,
-                            'time': f"{hour:02d}:{minute:02d}"
-                        }
-                        
-                        logger.info(f"✅ Автонапоминание установлено: {user_id} - {reminder_type}")
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка установки автонапоминания: {e}")
-    
-    async def send_auto_reminder(self, context: CallbackContext):
-        """Отправляет автоматическое напоминание"""
-        try:
-            user_id = context.job.data['user_id']
-            text = context.job.data['text']
-            
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"🔔 НАПОМИНАНИЕ:\n\n{text}"
-            )
-            
-            sheets_manager.save_daily_data(user_id, "напоминание", f"Авто: {text}")
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки автонапоминания: {e}")
-    
-    def set_custom_reminder(self, user_id: int, reminder_time: str, text: str) -> bool:
-        """Устанавливает кастомное напоминание"""
-        try:
-            remind_time = datetime.strptime(reminder_time, "%H:%M").time()
-            now = datetime.now().time()
-            
-            remind_datetime = datetime.combine(datetime.now().date(), remind_time)
-            if remind_time < now:
-                remind_datetime += timedelta(days=1)
-            
-            delay = (remind_datetime - datetime.now()).total_seconds()
-            
-            if delay < 0:
-                return False
-            
-            sheets_manager.save_daily_data(user_id, "напоминание", 
-                                         f"Кастом: {reminder_time} - {text}")
-            
-            job_name = f"custom_{user_id}_{datetime.now().timestamp()}"
-            
-            self.application.job_queue.run_once(
-                callback=self.send_custom_reminder,
-                when=delay,
-                name=job_name,
-                data={'user_id': user_id, 'text': text}
-            )
-            
-            self.active_reminders[job_name] = {
-                'user_id': user_id,
-                'time': reminder_time,
-                'text': text,
-                'type': 'custom'
-            }
-            
-            logger.info(f"✅ Кастомное напоминание: {user_id} на {reminder_time}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка установки напоминания: {e}")
-            return False
-    
-    async def send_custom_reminder(self, context: CallbackContext):
-        """Отправляет кастомное напоминание"""
-        try:
-            user_id = context.job.data['user_id']
-            text = context.job.data['text']
-            
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"🔔 ВАШЕ НАПОМИНАНИЕ:\n\n{text}"
-            )
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки напоминания: {e}")
-
-# Глобальный экземпляр системы напоминаний
-reminder_system = None
-
 # ========== ОБНОВЛЕННЫЕ КОМАНДЫ ==========
 
 async def start(update: Update, context: CallbackContext) -> int:
@@ -1252,15 +1249,15 @@ async def start(update: Update, context: CallbackContext) -> int:
     
     if has_answers:
         keyboard = [
-            ['⚙️ Настроить напоминания', '📊 Прогресс'],
-            ['👤 Профиль', '📋 План на сегодня'],
-            ['🔔 Мои напоминания', 'ℹ️ Помощь']
+            ['📊 Прогресс', '👤 Профиль'],
+            ['📋 План на сегодня', '🔔 Мои напоминания'],
+            ['ℹ️ Помощь', '🎮 Очки опыта']
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
         await update.message.reply_text(
             "✅ Вы уже зарегистрированы!\n\n"
-            "🔔 Хотите настроить автоматические напоминания или посмотреть ваш прогресс?",
+            "Добро пожаловать обратно! Что хотите сделать?",
             reply_markup=reply_markup
         )
         
@@ -1415,9 +1412,9 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
         logger.error(f"Ошибка отправки кнопки ответа: {e}")
     
     keyboard = [
-        ['⚙️ Настроить напоминания', '📊 Прогресс'],
-        ['👤 Профиль', '📋 План на сегодня'],
-        ['🔔 Мои напоминания', 'ℹ️ Помощь']
+        ['📊 Прогресс', '👤 Профиль'],
+        ['📋 План на сегодня', '🔔 Мои напоминания'],
+        ['ℹ️ Помощь', '🎮 Очки опыта']
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
@@ -1425,12 +1422,10 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
         "🎉 Спасибо за ответы!\n\n"
         "✅ Я передал всю информацию нашему специалисту. В течение 24 часов он проанализирует ваши данные и составит для вас индивидуальный план.\n\n"
         "🔔 Теперь у вас есть доступ к персональному ассистенту!\n\n"
-        "📋 Доступные команды:\n"
-        "/plan - Ваш план на сегодня\n"
-        "/progress - Статистика прогресса\n"
-        "/profile - Ваш профиль\n"
-        "/remind - Установить напоминание\n"
-        "/help - Помощь",
+        "💡 Вы можете писать напоминания естественным языком:\n"
+        "'напомни мне в 20:00 постирать купальник'\n"
+        "'напоминай каждый день в 8:00 делать зарядку'\n\n"
+        "Или использовать команды из меню ниже:",
         reply_markup=reply_markup
     )
     
@@ -1503,22 +1498,18 @@ async def progress_command(update: Update, context: CallbackContext):
     
     if not has_sufficient_data(user_id):
         # Показываем сообщение о недостатке данных
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("SELECT MIN(progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        start_date = result[0] if result and result[0] else datetime.now().strftime("%Y-%m-%d")
-        conn.close()
-
+        usage_days = get_user_usage_days(user_id)
+        
         await update.message.reply_text(
             f"📊 ВАШ ПРОГРЕСС ФОРМИРУЕТСЯ!\n\n"
+            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
             f"Пока данных недостаточно для полной статистики.\n"
             f"Отслеживаемые показатели:\n\n"
             f"✓ Выполненные задачи: 0/∞\n"
             f"✓ Настроение: пока нет оценок\n"
             f"✓ Энергия: собираем данные\n"
             f"✓ Водный баланс: отслеживается\n"
-            f"✓ Активность: мониторим с {start_date}\n\n"
+            f"✓ Активность: мониторим с {usage_days['days_since_registration']} дней\n\n"
             f"Продолжайте работать с ботом ежедневно!\n"
             f"Уже через 3 дня появится персональная статистика."
         )
@@ -1526,7 +1517,7 @@ async def progress_command(update: Update, context: CallbackContext):
         # Сохраняем данные в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
-            'серия_активности': '0',
+            'серия_активности': str(usage_days['current_streak']),
             'рекомендации_на_день': 'Продолжайте собирать данные',
             'динамика_настроения': 'недостаточно данных',
             'динамика_энергии': 'недостаточно данных',
@@ -1571,7 +1562,7 @@ async def progress_command(update: Update, context: CallbackContext):
         productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
         # Получаем дополнительную информацию для профиля
-        activity_streak = get_user_activity_streak(user_id)
+        usage_days = get_user_usage_days(user_id)
         level_info = get_user_level_info(user_id)
 
         # Персональный совет
@@ -1583,7 +1574,7 @@ async def progress_command(update: Update, context: CallbackContext):
 
         await update.message.reply_text(
             f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
-            f"📅 Период: последние 7 дней\n"
+            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
             f"✅ Выполнено задач: {tasks_completed}\n"
             f"😊 Среднее настроение: {mood_str}\n"
             f"⚡ Уровень энергии: {energy_str}\n"
@@ -1601,7 +1592,7 @@ async def progress_command(update: Update, context: CallbackContext):
             'user_id': user_id,
             'текущий_уровень': level_info['level'],
             'очки_опыта': str(level_info['points']),
-            'текущая_серия_активности': str(activity_streak),
+            'текущая_серия_активности': str(usage_days['current_streak']),
             'дата_последнего_прогресса': datetime.now().strftime("%Y-%m-%d")
         }
         save_extended_user_data(user_id, extended_data)
@@ -1609,7 +1600,7 @@ async def progress_command(update: Update, context: CallbackContext):
         # Сохраняем отчет в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
-            'серия_активности': str(activity_streak),
+            'серия_активности': str(usage_days['current_streak']),
             'уровень_дня': level_info['level'],
             'рекомендации_на_день': advice,
             'динамика_настроения': mood_dynamics,
@@ -1630,9 +1621,10 @@ async def profile_command(update: Update, context: CallbackContext):
     
     # Получаем данные для профиля
     main_goal = get_user_main_goal(user_id)
-    activity_streak = get_user_activity_streak(user_id)
+    usage_days = get_user_usage_days(user_id)
     level_info = get_user_level_info(user_id)
     favorite_ritual = get_favorite_ritual(user_id)
+    balance = get_user_balance(user_id)
     
     # Получаем статистику по планам
     conn = sqlite3.connect('clients.db')
@@ -1657,21 +1649,16 @@ async def profile_command(update: Update, context: CallbackContext):
     # Формируем профиль
     profile_text = (
         f"👤 ВАШ ПРОФИЛЬ\n\n"
+        f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
         f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
         f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
-        f"🔥 АКТИВНОСТЬ: {activity_streak} дней подряд\n\n"
+        f"⚖️ БАЛАНС РАБОТА/ОТДЫХ: {balance}\n\n"
         f"🏆 ДОСТИЖЕНИЯ:\n"
         f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
-        f"• Максимальная регулярность: {activity_streak} дней\n"
-        f"• Самый продуктивный день: понедельник\n"
+        f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
         f"• Любимый ритуал: {favorite_ritual}\n\n"
-        f"📈 ОСНОВНЫЕ МЕТРИКИ:\n"
-        f"• Средняя продуктивность: {avg_mood:.1f}/10\n"
-        f"• Баланс работа/отдых: 70/30\n"
-        f"• Регулярность: {min(activity_streak * 15, 100)}% дней активен\n\n"
         f"🎮 УРОВЕНЬ: {level_info['level']}\n"
-        f"⭐ ДО СЛЕДУЮЩЕГО УРОВНЯ: {level_info['points_to_next']} очков\n\n"
-        f"🎯 БЛИЖАЙШАЯ ЦЕЛЬ: Следующий шаг к '{main_goal}'\n\n"
+        f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
         f"💡 РЕКОМЕНДАЦИИ:\n"
         f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
     )
@@ -1683,11 +1670,33 @@ async def profile_command(update: Update, context: CallbackContext):
         'user_id': user_id,
         'текущий_уровень': level_info['level'],
         'очки_опыта': str(level_info['points']),
-        'текущая_серия_активности': str(activity_streak),
+        'текущая_серия_активности': str(usage_days['current_streak']),
         'любимый_ритуал': favorite_ritual,
         'ближайшая_цель': f"Следующий шаг к '{main_goal}'"
     }
     save_extended_user_data(user_id, extended_data)
+
+async def points_info_command(update: Update, context: CallbackContext):
+    """Объясняет систему очков"""
+    help_text = (
+        "🎮 СИСТЕМА ОЧКОВ И УРОВНЕЙ:\n\n"
+        "📊 Как начисляются очки:\n"
+        "• +10 очков за каждый активный день\n"
+        "• +2 очка за каждую выполненную задачу\n"
+        "• +5 очков за заполнение дневника прогресса\n"
+        "• +15 очков за серию из 7 дней подряд\n\n"
+        "🏆 Уровни:\n"
+        "• Новичок (0 очков)\n"
+        "• Ученик (50 очков)\n"
+        "• Опытный (100 очков)\n"
+        "• Профессионал (200 очков)\n"
+        "• Мастер (500 очков)\n\n"
+        "💡 Советы:\n"
+        "• Регулярность важнее количества!\n"
+        "• Даже маленькие шаги приносят очки\n"
+        "• Не пропускайте дни для сохранения серии"
+    )
+    await update.message.reply_text(help_text)
 
 async def help_command(update: Update, context: CallbackContext):
     """Показывает обновленную справку по командам"""
@@ -1702,6 +1711,7 @@ async def help_command(update: Update, context: CallbackContext):
         "/plan - План на сегодня\n"
         "/progress - Статистика прогресса\n"
         "/profile - Ваш профиль\n"
+        "/points_info - Объяснение системы очков\n"
         "/help - Эта справка\n\n"
         
         "🔹 Команды для отслеживания:\n"
@@ -1711,11 +1721,16 @@ async def help_command(update: Update, context: CallbackContext):
         "/water <стаканы> - Отслеживание воды\n\n"
         
         "🔹 Напоминания:\n"
-        "/remind - Установить разовое напоминание\n"
-        "/reminders - Показать активные напоминания\n"
-        "/reminder_settings - Настроить автоматические напоминания\n\n"
+        "/remind_me <время> <текст> - Разовое напоминание\n"
+        "/regular_remind <время> <дни> <текст> - Регулярное напоминание\n"
+        "/my_reminders - Показать активные напоминания\n"
+        "/delete_remind <id> - Удалить напоминание\n\n"
         
-        "💡 Просто напишите сообщение, чтобы связаться с ассистентом!"
+        "💡 Также вы можете писать напоминания естественным языком:\n"
+        "'напомни мне в 20:00 постирать купальник'\n"
+        "'напоминай каждый день в 8:00 делать зарядку'\n\n"
+        
+        "💬 Просто напишите сообщение, чтобы связаться с ассистентом!"
     )
     
     await update.message.reply_text(help_text)
@@ -1909,81 +1924,243 @@ async def water_command(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Количество должно быть числом")
 
-# ========== КОМАНДЫ НАПОМИНАНИЙ ==========
+# ========== НОВЫЕ КОМАНДЫ НАПОМИНАНИЙ ==========
 
-async def remind_command(update: Update, context: CallbackContext):
+async def remind_me_command(update: Update, context: CallbackContext):
     """Установка разового напоминания"""
     user_id = update.effective_user.id
     
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
-            "❌ Формат команды:\n"
-            "/remind ВРЕМЯ ТЕКСТ\n\n"
-            "💡 Примеры:\n"
-            "/remind 20:00 принять лекарство\n"
-            "/remind 09:30 позвонить врачу\n\n"
-            "⏰ Время в формате ЧЧ:MM (24-часовой)"
+            "⏰ Установка разового напоминания:\n\n"
+            "Формат:\n"
+            "/remind_me <время> <текст>\n\n"
+            "Примеры:\n"
+            "/remind_me 20:30 принять лекарство\n"
+            "/remind_me 9 утра позвонить врачу\n"
+            "/remind_me вечером постирать купальник\n\n"
+            "⏱️ Время можно указывать в разных форматах:\n"
+            "• 20:30, 09:00\n"
+            "• 9 утра, 7 вечера\n"
+            "• утром, днем, вечером\n"
+            "• через 2 часа"
         )
         return
     
     time_str = context.args[0]
     reminder_text = " ".join(context.args[1:])
     
-    try:
-        datetime.strptime(time_str, "%H:%M")
-    except ValueError:
+    # Парсим время
+    time_data = parse_time_input(time_str)
+    
+    if not time_data:
         await update.message.reply_text(
-            "❌ Неправильный формат времени.\n"
-            "Используйте: ЧЧ:MM (например, 20:00 или 09:30)"
+            "❌ Не удалось распознать время.\n"
+            "Пожалуйста, укажите время в одном из форматов:\n"
+            "• 20:30 или 09:00\n"
+            "• 9 утра или 7 вечера\n"
+            "• утром, днем, вечером"
         )
         return
     
-    success = reminder_system.set_custom_reminder(user_id, time_str, reminder_text)
+    reminder_data = {
+        'type': 'once',
+        'time': time_data['time'],
+        'text': reminder_text,
+        'days': []
+    }
+    
+    success = add_reminder_to_db(user_id, reminder_data)
     
     if success:
         await update.message.reply_text(
-            f"✅ Напоминание установлено на {time_str}:\n"
+            f"✅ Напоминание установлено на {time_data['time']}:\n"
             f"📝 {reminder_text}\n\n"
             f"Я пришлю уведомление в указанное время!"
         )
     else:
         await update.message.reply_text("❌ Не удалось установить напоминание")
 
-async def reminders_command(update: Update, context: CallbackContext):
+async def regular_remind_command(update: Update, context: CallbackContext):
+    """Установка регулярного напоминания"""
+    user_id = update.effective_user.id
+    
+    if not context.args or len(context.args) < 3:
+        await update.message.reply_text(
+            "🔄 Установка регулярного напоминания:\n\n"
+            "Формат:\n"
+            "/regular_remind <время> <дни> <текст>\n\n"
+            "Примеры:\n"
+            "/regular_remind 08:00 пн,ср,пт утренняя зарядка\n"
+            "/regular_remind 09:00 ежедневно принимать витамины\n"
+            "/regular_remind 20:00 вт,чт йога\n\n"
+            "📅 Дни недели:\n"
+            "пн, вт, ср, чт, пт, сб, вс\n"
+            "или 'ежедневно' для всех дней"
+        )
+        return
+    
+    time_str = context.args[0]
+    days_str = context.args[1]
+    reminder_text = " ".join(context.args[2:])
+    
+    # Парсим время
+    time_data = parse_time_input(time_str)
+    
+    if not time_data:
+        await update.message.reply_text(
+            "❌ Не удалось распознать время.\n"
+            "Пожалуйста, укажите время в формате ЧЧ:MM"
+        )
+        return
+    
+    # Парсим дни недели
+    days_map = {
+        'пн': 'пн', 'вт': 'вт', 'ср': 'ср', 'чт': 'чт',
+        'пт': 'пт', 'сб': 'сб', 'вс': 'вс',
+        'ежедневно': ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+    }
+    
+    if days_str.lower() == 'ежедневно':
+        days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+    else:
+        days = []
+        for day_part in days_str.split(','):
+            day_clean = day_part.strip().lower()
+            if day_clean in days_map:
+                days.append(days_map[day_clean])
+    
+    if not days:
+        await update.message.reply_text(
+            "❌ Не удалось распознать дни недели.\n"
+            "Укажите дни в формате: пн,ср,пт или 'ежедневно'"
+        )
+        return
+    
+    reminder_data = {
+        'type': 'regular',
+        'time': time_data['time'],
+        'text': reminder_text,
+        'days': days
+    }
+    
+    success = add_reminder_to_db(user_id, reminder_data)
+    
+    if success:
+        days_display = ', '.join(days) if days != ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'] else 'ежедневно'
+        await update.message.reply_text(
+            f"✅ Регулярное напоминание установлено:\n"
+            f"⏰ {time_data['time']} {days_display}\n"
+            f"📝 {reminder_text}\n\n"
+            f"Я буду напоминать вам по установленному расписанию!"
+        )
+    else:
+        await update.message.reply_text("❌ Не удалось установить напоминание")
+
+async def my_reminders_command(update: Update, context: CallbackContext):
     """Показывает активные напоминания"""
     user_id = update.effective_user.id
     
-    user_reminders = []
-    for job_name, job_data in reminder_system.active_reminders.items():
-        if job_data['user_id'] == user_id:
-            if job_data['type'] == 'custom':
-                user_reminders.append(f"⏰ {job_data['time']}: {job_data['text']}")
-            else:
-                user_reminders.append(f"🔄 {job_data['time']}: {job_data['type']}")
+    reminders = get_user_reminders(user_id)
     
-    if user_reminders:
-        await update.message.reply_text(
-            "📋 Ваши напоминания:\n\n" + "\n".join(user_reminders) +
-            "\n\n⚙️ Изменить настройки: /reminder_settings"
-        )
-    else:
+    if not reminders:
         await update.message.reply_text(
             "📭 У вас нет активных напоминаний\n\n"
-            "⚙️ Настроить автоматические: /reminder_settings\n"
-            "⏰ Установить разовое: /remind"
+            "💡 Чтобы установить напоминание:\n"
+            "• Используйте команды /remind_me или /regular_remind\n"
+            "• Или напишите естественным языком:\n"
+            "  'напомни мне в 20:00 постирать купальник'\n"
+            "  'напоминай каждый день в 8:00 делать зарядку'"
         )
+        return
+    
+    reminders_text = "📋 Ваши активные напоминания:\n\n"
+    
+    for i, reminder in enumerate(reminders, 1):
+        type_icon = "🔄" if reminder['type'] == 'regular' else "⏰"
+        days_info = f" ({reminder['days']})" if reminder['type'] == 'regular' else ""
+        
+        reminders_text += f"{i}. {type_icon} {reminder['time']}{days_info}\n"
+        reminders_text += f"   📝 {reminder['text']}\n"
+        reminders_text += f"   🆔 ID: {reminder['id']}\n\n"
+    
+    reminders_text += "❌ Чтобы удалить напоминание:\n/delete_remind <ID>"
+    
+    await update.message.reply_text(reminders_text)
 
-async def reminder_settings_command(update: Update, context: CallbackContext):
-    """Настройка напоминаний"""
-    return await reminder_system.setup_reminders(update, context)
+async def delete_remind_command(update: Update, context: CallbackContext):
+    """Удаляет напоминание"""
+    user_id = update.effective_user.id
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите ID напоминания для удаления:\n"
+            "/delete_remind <ID>\n\n"
+            "📋 Посмотреть ID ваших напоминаний:\n"
+            "/my_reminders"
+        )
+        return
+    
+    try:
+        reminder_id = int(context.args[0])
+        success = delete_reminder_from_db(reminder_id)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ Напоминание {reminder_id} удалено!\n\n"
+                f"📋 Текущий список напоминаний:\n"
+                f"/my_reminders"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Не удалось удалить напоминание.\n"
+                "Проверьте правильность ID."
+            )
+        
+    except ValueError:
+        await update.message.reply_text("❌ ID напоминания должен быть числом")
 
-async def cancel_reminder_setup(update: Update, context: CallbackContext):
-    """Отмена настройки напоминаний"""
-    await update.message.reply_text(
-        "❌ Настройка напоминаний отменена.\n\n"
-        "Вы всегда можете настроить их позже: /reminder_settings"
-    )
-    return ConversationHandler.END
+async def handle_reminder_nlp(update: Update, context: CallbackContext):
+    """Обрабатывает естественные запросы на напоминания"""
+    user_id = update.effective_user.id
+    message_text = update.message.text
+    
+    # Парсим текст напоминания
+    reminder_data = parse_reminder_text(message_text)
+    
+    if not reminder_data:
+        await update.message.reply_text(
+            "❌ Не понял формат напоминания.\n\n"
+            "💡 Попробуйте так:\n"
+            "'напомни мне в 20:00 постирать купальник'\n"
+            "'напоминай каждый день в 8:00 делать зарядку'\n"
+            "'напомни завтра утром позвонить врачу'"
+        )
+        return
+    
+    # Добавляем напоминание в базу
+    success = add_reminder_to_db(user_id, reminder_data)
+    
+    if success:
+        if reminder_data['type'] == 'regular':
+            days_display = ', '.join(reminder_data['days']) if reminder_data['days'] != ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'] else 'ежедневно'
+            response = (
+                f"✅ Регулярное напоминание установлено!\n"
+                f"⏰ {reminder_data['time']} {days_display}\n"
+                f"📝 {reminder_data['text']}\n\n"
+                f"Я буду напоминать вам по установленному расписанию!"
+            )
+        else:
+            response = (
+                f"✅ Напоминание установлено!\n"
+                f"⏰ {reminder_data['time']}\n"
+                f"📝 {reminder_data['text']}\n\n"
+                f"Я пришлю уведомление в указанное время!"
+            )
+        
+        await update.message.reply_text(response)
+    else:
+        await update.message.reply_text("❌ Не удалось установить напоминание")
 
 # ========== АДМИН КОМАНДЫ ==========
 
@@ -2509,12 +2686,30 @@ async def handle_all_messages(update: Update, context: CallbackContext):
     user = update.effective_user
     user_id = user.id
     
+    # Обработка кнопок
+    text = update.message.text
+    if text == '📊 Прогресс':
+        return await progress_command(update, context)
+    elif text == 'ℹ️ Помощь':
+        return await help_command(update, context)
+    elif text == '👤 Профиль':
+        return await profile_command(update, context)
+    elif text == '📋 План на сегодня':
+        return await plan_command(update, context)
+    elif text == '🔔 Мои напоминания':
+        return await my_reminders_command(update, context)
+    elif text == '🎮 Очки опыта':
+        return await points_info_command(update, context)
+    
+    # Обработка естественного языка для напоминаний
+    if text and any(word in text.lower() for word in ['напомни', 'напоминай']):
+        return await handle_reminder_nlp(update, context)
+    
+    # Остальная логика обработки сообщений
     update_user_activity(user_id)
     
     if not check_user_registered(user_id):
-        await update.message.reply_text(
-            "👋 Для начала работы с персональным ассистентом отправьте команду /start"
-        )
+        await update.message.reply_text("👋 Для начала работы с персональным ассистентом отправьте команду /start")
         return
     
     message_text = update.message.text or "Сообщение без текста"
@@ -2680,25 +2875,8 @@ def main():
     """Основная функция запуска бота"""
     try:
         application = Application.builder().token(TOKEN).build()
-        
-        global reminder_system
-        reminder_system = SmartReminderSystem(application)
 
         application.add_error_handler(error_handler)
-
-        # Обработчики для напоминаний
-        reminder_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler('reminder_settings', reminder_settings_command),
-                MessageHandler(filters.Regex('^(⚙️ Настроить напоминания)$'), reminder_settings_command)
-            ],
-            states={
-                "REMINDER_SETUP": [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, reminder_system.handle_reminder_setup)
-                ]
-            },
-            fallbacks=[CommandHandler('cancel', cancel_reminder_setup)]
-        )
 
         # Основной обработчик диалога
         conv_handler = ConversationHandler(
@@ -2711,13 +2889,13 @@ def main():
         )
 
         application.add_handler(conv_handler)
-        application.add_handler(reminder_conv)
         
         # Основные команды
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("profile", profile_command))
         application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("points_info", points_info_command))
         application.add_handler(CommandHandler("stats", admin_stats))
         application.add_handler(CommandHandler("send", send_to_user))
         application.add_handler(CommandHandler("questionnaire", start))
@@ -2728,9 +2906,11 @@ def main():
         application.add_handler(CommandHandler("energy", energy_command))
         application.add_handler(CommandHandler("water", water_command))
         
-        # Команды для напоминаний
-        application.add_handler(CommandHandler("remind", remind_command))
-        application.add_handler(CommandHandler("reminders", reminders_command))
+        # Новые команды для напоминаний
+        application.add_handler(CommandHandler("remind_me", remind_me_command))
+        application.add_handler(CommandHandler("regular_remind", regular_remind_command))
+        application.add_handler(CommandHandler("my_reminders", my_reminders_command))
+        application.add_handler(CommandHandler("delete_remind", delete_remind_command))
         
         # Команды для администратора
         application.add_handler(CommandHandler("create_plan", create_plan_command))
