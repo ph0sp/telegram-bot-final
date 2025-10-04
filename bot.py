@@ -91,7 +91,7 @@ QUESTIONS = [
     "Как часто вам удается выделять время на эти занятия?",
     "Планируете ли вы выходные дни или микро-перерывы в течение дня?",
     "Важно ли для вас время на общение с семьей/друзьями? Сколько раз в неделю вы бы хотели это видеть в своем плане?",
-    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режим, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалов вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
+    "Блок 6: Ритуалы для здоровья и самочувствия\n\nИсходя из вашего режима, предлагаю вам на выбор несколько идей. Что из этого вам откликается?\n\nУтренние ритуалы (на выбор):\n* Стакан теплой воды с лимоном: для запуска метаболизма.\n* Несложная зарядка/растяжка (5-15 мин): чтобы размяться и проснуться.\n* Медитация или ведение дневника (5-10 мин): для настройки на день.\n* Контрастный душ: для бодрости.\n* Полезный завтрак без телефона: осознанное начало дня.\n\nВечерние ритуалы (на выбор):\n* Выключение гаджетов за 1 час до сна: для улучшения качества сна.\n* Ведение дневника благодарности или запись 3х хороших событий дня.\n* Чтение книги (не с экрана).\n* Легкая растяжка или йога перед сном: для расслабления мышц.\n* Планирование главных задач на следующий день (3 дела): чтобы выгрузить мысли и спать спокойно.\n* Ароматерапия или спокойная музыка.\n\nКакие из этих утренних ритуалов вам были бы интересны?\n\nКакие вечерние ритуалы вы бы хотели внедрить?\n\nЕсть ли ваши личные ритуалы, которые вы хотели бы сохранить?",
     "Отлично, остался заключительный блок.\n\nБлок 7: Финальные Уточнения и Гибкость\n\nКакой ваш идеальный баланс между продуктивностью и отдыхом? (например, 70/30, 60/40)",
     "Что чаще всего мешает вам следовать планам? (неожиданные дела, лень, отсутствие мотивации)",
     "Как нам лучше всего предусмотреть дни непредвиденных обстоятельств или дни с низкой энергией? (Например, запланировать 1-2 таких дня в неделю)"
@@ -2180,6 +2180,325 @@ async def set_plan_command(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка создания плана: {e}")
 
+# ========== УЛУЧШЕННЫЕ АДМИН КОМАНДЫ ==========
+
+async def admin_help(update: Update, context: CallbackContext):
+    """Помощь для администратора"""
+    if str(update.effective_user.id) != YOUR_CHAT_ID:
+        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        return
+    
+    help_text = (
+        "🛠️ КОМАНДЫ ДЛЯ АДМИНИСТРАТОРА:\n\n"
+        
+        "👥 Управление пользователями:\n"
+        "/admin_stats - Статистика бота\n"
+        "/user_info <user_id> - Информация о пользователе\n"
+        "/user_plan <user_id> - План пользователя\n"
+        "/user_progress <user_id> - Прогресс пользователя\n\n"
+        
+        "📋 Управление планами:\n"
+        "/create_plan <user_id> - Начать создание плана\n"
+        "/set_plan <user_id> ритуал1|ритуал2|... - Установить план\n"
+        "/quick_plan <user_id> <текст> - Быстрый план\n\n"
+        
+        "💬 Общение:\n"
+        "/send <user_id> <сообщение> - Отправить сообщение\n"
+        "/broadcast <сообщение> - Рассылка всем\n\n"
+        
+        "📊 Google Sheets:\n"
+        "/update_sheets <user_id> - Обновить данные в таблице\n"
+        "/check_sheets <user_id> - Проверить данные в таблице\n"
+    )
+    
+    await update.message.reply_text(help_text)
+
+async def user_info_command(update: Update, context: CallbackContext):
+    """Информация о пользователе"""
+    if str(update.effective_user.id) != YOUR_CHAT_ID:
+        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID пользователя: /user_info <user_id>")
+        return
+    
+    user_id = context.args[0]
+    
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Основная информация
+        c.execute("SELECT * FROM clients WHERE user_id = ?", (user_id,))
+        user_data = c.fetchone()
+        
+        if not user_data:
+            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            return
+        
+        # Статистика сообщений
+        c.execute("SELECT COUNT(*) FROM messages WHERE user_id = ?", (user_id,))
+        messages_count = c.fetchone()[0]
+        
+        # Анкета
+        c.execute("SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = ?", (user_id,))
+        answers_count = c.fetchone()[0]
+        
+        # Прогресс
+        c.execute("SELECT COUNT(*) FROM user_progress WHERE user_id = ?", (user_id,))
+        progress_count = c.fetchone()[0]
+        
+        # Последняя активность
+        c.execute("SELECT last_activity FROM clients WHERE user_id = ?", (user_id,))
+        last_activity = c.fetchone()[0]
+        
+        conn.close()
+        
+        user_info = (
+            f"👤 ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ:\n\n"
+            f"🆔 ID: {user_data[0]}\n"
+            f"📛 Имя: {user_data[2]} {user_data[3] or ''}\n"
+            f"🔗 Username: @{user_data[1] or 'нет'}\n"
+            f"📅 Регистрация: {user_data[5]}\n"
+            f"🕐 Последняя активность: {last_activity}\n"
+            f"📊 Статистика:\n"
+            f"  • Сообщений: {messages_count}\n"
+            f"  • Ответов в анкете: {answers_count}\n"
+            f"  • Записей прогресса: {progress_count}\n"
+        )
+        
+        # Кнопки быстрых действий
+        keyboard = [
+            [InlineKeyboardButton("📋 Создать план", callback_data=f"create_plan_{user_id}")],
+            [InlineKeyboardButton("💬 Написать сообщение", callback_data=f"message_{user_id}")],
+            [InlineKeyboardButton("📊 Посмотреть прогресс", callback_data=f"progress_{user_id}")],
+            [InlineKeyboardButton("📝 Посмотреть анкету", callback_data=f"questionnaire_{user_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(user_info, reply_markup=reply_markup)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def quick_plan_command(update: Update, context: CallbackContext):
+    """Быстрое создание плана через бота"""
+    if str(update.effective_user.id) != YOUR_CHAT_ID:
+        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        return
+    
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Формат команды:\n"
+            "/quick_plan <user_id> <текст плана>\n\n"
+            "Пример:\n"
+            "/quick_plan 12345678 Утренняя медитация|Зарядка|Важная задача|Вторая задача|Третья задача|Четвертая задача|Обед в 13:00|Чтение|Планирование|Хорошо выспитесь|23:00|8 стаканов|Прогулка 30 мин"
+        )
+        return
+    
+    user_id = context.args[0]
+    plan_text = " ".join(context.args[1:])
+    
+    try:
+        # Парсим текст плана
+        plan_parts = plan_text.split("|")
+        if len(plan_parts) < 13:
+            await update.message.reply_text(
+                "❌ Недостаточно частей плана. Нужно 13 частей, разделенных |\n\n"
+                "Формат: утренний_ритуал1|утренний_ритуал2|задача1|задача2|задача3|задача4|обед|вечерний_ритуал1|вечерний_ритуал2|совет|сон|вода|активность"
+            )
+            return
+        
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT first_name FROM clients WHERE user_id = ?", (user_id,))
+        user_data = c.fetchone()
+        conn.close()
+        
+        if not user_data:
+            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            return
+        
+        user_name = user_data[0]
+        
+        plan_data = {
+            'plan_date': datetime.now().strftime("%Y-%m-%d"),
+            'morning_ritual1': plan_parts[0],
+            'morning_ritual2': plan_parts[1],
+            'task1': plan_parts[2],
+            'task2': plan_parts[3],
+            'task3': plan_parts[4],
+            'task4': plan_parts[5],
+            'lunch_break': plan_parts[6],
+            'evening_ritual1': plan_parts[7],
+            'evening_ritual2': plan_parts[8],
+            'advice': plan_parts[9],
+            'sleep_time': plan_parts[10],
+            'water_goal': plan_parts[11],
+            'activity_goal': plan_parts[12]
+        }
+        
+        save_user_plan_to_db(user_id, plan_data)
+        
+        # Отправляем уведомление пользователю
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🎉 {user_name}, ваш план на сегодня готов!\n\n"
+                     f"📋 Посмотреть: /plan\n\n"
+                     f"💪 Удачи в выполнении! Если есть вопросы, пишите мне."
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+        
+        # Сохраняем в Google Sheets
+        today = datetime.now().strftime("%Y-%m-%d")
+        sheets_plan_data = {
+            'date': today,
+            'strategic_tasks_done': '0%',
+            'morning_rituals_done': 'не выполнено',
+            'evening_rituals_done': 'не выполнено',
+            'mood': '',
+            'energy': '',
+            'water_intake': '0'
+        }
+        save_daily_report_to_sheets(user_id, sheets_plan_data)
+        
+        await update.message.reply_text(
+            f"✅ План для {user_name} создан и сохранен!\n\n"
+            f"📋 Пользователь получил уведомление.\n"
+            f"📊 Данные сохранены в Google Sheets."
+        )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка создания плана: {e}")
+
+async def broadcast_command(update: Update, context: CallbackContext):
+    """Рассылка сообщений всем пользователям"""
+    if str(update.effective_user.id) != YOUR_CHAT_ID:
+        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите сообщение для рассылки:\n"
+            "/broadcast <текст сообщения>"
+        )
+        return
+    
+    message_text = " ".join(context.args)
+    
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT user_id, first_name FROM clients WHERE status = 'active'")
+        users = c.fetchall()
+        conn.close()
+        
+        total_users = len(users)
+        successful_sends = 0
+        failed_sends = 0
+        
+        await update.message.reply_text(f"📤 Начинаю рассылку для {total_users} пользователей...")
+        
+        for user_id, first_name in users:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"📢 СООБЩЕНИЕ ОТ АССИСТЕНТА:\n\n{message_text}"
+                )
+                successful_sends += 1
+                
+                # Логируем отправку
+                save_message(user_id, f"РАССЫЛКА: {message_text}", 'outgoing')
+                
+                # Небольшая задержка чтобы не превысить лимиты Telegram
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                failed_sends += 1
+                logger.error(f"Ошибка отправки пользователю {user_id}: {e}")
+        
+        # Отчет о рассылке
+        report_text = (
+            f"📊 ОТЧЕТ О РАССЫЛКЕ:\n\n"
+            f"✅ Успешно отправлено: {successful_sends}\n"
+            f"❌ Не удалось отправить: {failed_sends}\n"
+            f"👥 Всего пользователей: {total_users}\n"
+            f"📝 Текст сообщения: {message_text[:100]}..."
+        )
+        
+        await update.message.reply_text(report_text)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка рассылки: {e}")
+
+async def update_sheets_command(update: Update, context: CallbackContext):
+    """Принудительное обновление данных в Google Sheets"""
+    if str(update.effective_user.id) != YOUR_CHAT_ID:
+        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID пользователя: /update_sheets <user_id>")
+        return
+    
+    user_id = context.args[0]
+    
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Получаем данные пользователя
+        c.execute("SELECT * FROM clients WHERE user_id = ?", (user_id,))
+        user_data = c.fetchone()
+        
+        if not user_data:
+            await update.message.reply_text(f"❌ Пользователь с ID {user_id} не найден")
+            return
+        
+        # Получаем последний прогресс
+        c.execute("SELECT * FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC LIMIT 1", (user_id,))
+        progress_data = c.fetchone()
+        
+        conn.close()
+        
+        # Подготавливаем данные для Google Sheets
+        user_info = {
+            'user_id': user_id,
+            'telegram_username': user_data[1],
+            'first_name': user_data[2],
+            'last_name': user_data[3],
+            'start_date': user_data[5],
+            'last_activity': user_data[6]
+        }
+        
+        # Сохраняем в Google Sheets
+        success = save_client_to_sheets(user_info)
+        
+        if success:
+            # Если есть данные прогресса, сохраняем и их
+            if progress_data:
+                report_data = {
+                    'date': progress_data[2],
+                    'mood': progress_data[4] or '',
+                    'energy': progress_data[5] or '',
+                    'water_intake': progress_data[7] or '',
+                    'strategic_tasks_done': f"{progress_data[3] or 0}/4"
+                }
+                save_daily_report_to_sheets(user_id, report_data)
+            
+            await update.message.reply_text(
+                f"✅ Данные пользователя {user_id} обновлены в Google Sheets!\n\n"
+                f"📊 Можно проверить в таблице 'клиенты_детали'"
+            )
+        else:
+            await update.message.reply_text("❌ Ошибка обновления данных в Google Sheets")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка обновления: {e}")
+
 # ========== ОБРАБОТЧИКИ СООБЩЕНИЙ ==========
 
 async def handle_all_messages(update: Update, context: CallbackContext):
@@ -2246,7 +2565,47 @@ async def button_callback(update: Update, context: CallbackContext):
             text=f"💌 Ответ пользователю\n\n"
                  f"👤 ID пользователя: {user_id}\n\n"
                  f"📝 Чтобы ответить, используйте команду:\n"
+                 f"/send {user_id} ваш текст сообщения\n\n"
+                 f"⚡ Или быстрые команды:\n"
+                 f"/user_info {user_id} - Информация о пользователе\n"
+                 f"/quick_plan {user_id} - Быстрый план"
+        )
+    
+    elif query.data.startswith('create_plan_'):
+        user_id = query.data.replace('create_plan_', '')
+        await query.edit_message_text(
+            text=f"📋 Создание плана для пользователя {user_id}\n\n"
+                 f"Используйте команду:\n"
+                 f"/create_plan {user_id}\n\n"
+                 f"⚡ Или быстрый вариант:\n"
+                 f"/quick_plan {user_id} утренний_ритуал1|утренний_ритуал2|задача1|задача2|задача3|задача4|обед|вечерний_ритуал1|вечерний_ритуал2|совет|сон|вода|активность"
+        )
+    
+    elif query.data.startswith('message_'):
+        user_id = query.data.replace('message_', '')
+        context.user_data['reply_user_id'] = user_id
+        await query.edit_message_text(
+            text=f"💌 Написать пользователю {user_id}\n\n"
+                 f"Используйте команду:\n"
                  f"/send {user_id} ваш текст сообщения"
+        )
+    
+    elif query.data.startswith('progress_'):
+        user_id = query.data.replace('progress_', '')
+        await query.edit_message_text(
+            text=f"📊 Просмотр прогресса пользователя {user_id}\n\n"
+                 f"Используйте команду:\n"
+                 f"/user_progress {user_id}"
+        )
+    
+    elif query.data.startswith('questionnaire_'):
+        user_id = query.data.replace('questionnaire_', '')
+        await query.edit_message_text(
+            text=f"📝 Просмотр анкеты пользователя {user_id}\n\n"
+                 f"Чтобы просмотреть анкету, используйте команду:\n"
+                 f"/get_questionnaire {user_id}\n\n"
+                 f"📋 Или создайте план на основе анкеты:\n"
+                 f"/create_plan {user_id}"
         )
     
     elif query.data.startswith('view_questionnaire_'):
@@ -2271,6 +2630,13 @@ async def button_callback(update: Update, context: CallbackContext):
             user_name = user_data[0]
             reg_date = user_data[1]
             
+            keyboard = [
+                [InlineKeyboardButton("📋 Создать план", callback_data=f"create_plan_{user_id}")],
+                [InlineKeyboardButton("💬 Написать", callback_data=f"message_{user_id}")],
+                [InlineKeyboardButton("📊 Прогресс", callback_data=f"progress_{user_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 text=f"📊 Статистика пользователя:\n\n"
                      f"👤 Имя: {user_name}\n"
@@ -2280,16 +2646,9 @@ async def button_callback(update: Update, context: CallbackContext):
                      f"💌 Чтобы ответить:\n"
                      f"/send {user_id} ваш текст\n\n"
                      f"📋 Создать план:\n"
-                     f"/create_plan {user_id}"
+                     f"/create_plan {user_id}",
+                reply_markup=reply_markup
             )
-    
-    elif query.data.startswith('create_plan_'):
-        user_id = query.data.replace('create_plan_', '')
-        await query.edit_message_text(
-            text=f"📋 Создание плана для пользователя {user_id}\n\n"
-                 f"Используйте команду:\n"
-                 f"/create_plan {user_id}"
-        )
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Отмена диалога"""
@@ -2376,6 +2735,11 @@ def main():
         # Команды для администратора
         application.add_handler(CommandHandler("create_plan", create_plan_command))
         application.add_handler(CommandHandler("set_plan", set_plan_command))
+        application.add_handler(CommandHandler("admin_help", admin_help))
+        application.add_handler(CommandHandler("user_info", user_info_command))
+        application.add_handler(CommandHandler("quick_plan", quick_plan_command))
+        application.add_handler(CommandHandler("broadcast", broadcast_command))
+        application.add_handler(CommandHandler("update_sheets", update_sheets_command))
         
         # Обработчики кнопок и сообщений
         application.add_handler(CallbackQueryHandler(button_callback))
