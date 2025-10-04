@@ -268,7 +268,7 @@ def init_google_sheets():
                 "id_клиента", "telegram_username", "имя", "месяц",
                 "среднее_настроение", "средний_уровень_мотивации",
                 "процент_выполнения_планов", "прогресс_по_целям",
-                "количество_активных_дней", "тренд_настроения",
+                "количество_активных_дней", "динамика_настроения",
                 "процент_выполнения_утренних_ритуалов",
                 "процент_выполнения_вечерних_ритуалов",
                 "общее_количество_достижений", "основные_корректировки_месяца",
@@ -666,6 +666,125 @@ def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
     conn.close()
     logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
 
+# ========== НОВЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ ДАННЫХ ==========
+
+def has_sufficient_data(user_id: int) -> bool:
+    """Проверяет есть ли достаточно данных для статистики (минимум 3 дня)"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count >= 3
+
+def get_user_activity_streak(user_id: int) -> int:
+    """Возвращает текущую серию активных дней подряд"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Получаем все даты активности пользователя
+    c.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC", (user_id,))
+    dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in c.fetchall()]
+    conn.close()
+    
+    if not dates:
+        return 0
+    
+    # Сортируем по убыванию и проверяем последовательность
+    dates.sort(reverse=True)
+    streak = 0
+    today = datetime.now().date()
+    
+    for i, date in enumerate(dates):
+        expected_date = today - timedelta(days=i)
+        if date == expected_date:
+            streak += 1
+        else:
+            break
+    
+    return streak
+
+def get_user_main_goal(user_id: int) -> str:
+    """Получает главную цель пользователя из анкеты"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 1", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    
+    return result[0] if result else "Цель не установлена"
+
+def get_user_level_info(user_id: int) -> Dict[str, Any]:
+    """Возвращает информацию об уровне пользователя"""
+    # Базовая реализация системы уровней
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Считаем количество дней активности
+    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+    active_days = c.fetchone()[0] or 0
+    
+    # Считаем выполненные задачи
+    c.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = ?", (user_id,))
+    total_tasks = c.fetchone()[0] or 0
+    
+    conn.close()
+    
+    # Простая система уровней
+    level_points = active_days * 10 + total_tasks * 2
+    level_names = {
+        0: "Новичок",
+        50: "Ученик", 
+        100: "Опытный",
+        200: "Профессионал",
+        500: "Мастер"
+    }
+    
+    current_level = "Новичок"
+    next_level_points = 50
+    points_to_next = 50
+    
+    for points, level in sorted(level_names.items()):
+        if level_points >= points:
+            current_level = level
+        else:
+            next_level_points = points
+            points_to_next = points - level_points
+            break
+    
+    return {
+        'level': current_level,
+        'points': level_points,
+        'points_to_next': points_to_next,
+        'next_level_points': next_level_points
+    }
+
+def get_favorite_ritual(user_id: int) -> str:
+    """Определяет любимый ритуал пользователя"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Получаем ответы о ритуалах из анкеты
+    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 22", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    
+    if result:
+        rituals_text = result[0]
+        # Простой анализ текста для определения предпочтений
+        if "медитация" in rituals_text.lower():
+            return "Утренняя медитация"
+        elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
+            return "Утренняя зарядка"
+        elif "чтение" in rituals_text.lower():
+            return "Вечернее чтение"
+        elif "дневник" in rituals_text.lower():
+            return "Ведение дневника"
+        elif "планирование" in rituals_text.lower():
+            return "Планирование задач"
+    
+    return "Утренняя зарядка"  # Ритуал по умолчанию
+
 # ========== GOOGLE SHEETS МЕНЕДЖЕР ==========
 
 class GoogleSheetsManager:
@@ -1038,7 +1157,7 @@ class SmartReminderSystem:
 # Глобальный экземпляр системы напоминаний
 reminder_system = None
 
-# ========== ОСНОВНЫЕ КОМАНДЫ ==========
+# ========== ОБНОВЛЕННЫЕ КОМАНДЫ ==========
 
 async def start(update: Update, context: CallbackContext) -> int:
     """Обработчик команды /start"""
@@ -1055,16 +1174,19 @@ async def start(update: Update, context: CallbackContext) -> int:
     conn.close()
     
     if has_answers:
-        keyboard = [['⚙️ Настроить напоминания', '📋 Мой план']]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+        keyboard = [
+            ['⚙️ Настроить напоминания', '📊 Прогресс'],
+            ['👤 Профиль', '📋 План на сегодня'],
+            ['🔔 Мои напоминания', 'ℹ️ Помощь']
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
         await update.message.reply_text(
             "✅ Вы уже зарегистрированы!\n\n"
-            "🔔 Хотите настроить автоматические напоминания?",
+            "🔔 Хотите настроить автоматические напоминания или посмотреть ваш прогресс?",
             reply_markup=reply_markup
         )
         
-        context.user_data['waiting_for_reminder_setup'] = True
         return ConversationHandler.END
     else:
         keyboard = [['👨 Мужской', '👩 Женский']]
@@ -1207,22 +1329,29 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
     except Exception as e:
         logger.error(f"Ошибка отправки кнопки ответа: {e}")
     
+    keyboard = [
+        ['⚙️ Настроить напоминания', '📊 Прогресс'],
+        ['👤 Профиль', '📋 План на сегодня'],
+        ['🔔 Мои напоминания', 'ℹ️ Помощь']
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
     await update.message.reply_text(
         "🎉 Спасибо за ответы!\n\n"
         "✅ Я передал всю информацию нашему специалисту. В течение 24 часов он проанализирует ваши данные и составит для вас индивидуальный план.\n\n"
         "🔔 Теперь у вас есть доступ к персональному ассистенту!\n\n"
         "📋 Доступные команды:\n"
-        "/my_plan - Ваш индивидуальный план\n"
-        "/plan - Общий план на сегодня\n"
+        "/plan - Ваш план на сегодня\n"
         "/progress - Статистика прогресса\n"
-        "/chat - Связь с ассистентом\n"
-        "/help - Помощь\n"
-        "/profile - Ваш профиль"
+        "/profile - Ваш профиль\n"
+        "/remind - Установить напоминание\n"
+        "/help - Помощь",
+        reply_markup=reply_markup
     )
     
     return ConversationHandler.END
 
-# ========== КОМАНДЫ ПОЛЬЗОВАТЕЛЯ ==========
+# ========== ОБНОВЛЕННЫЕ КОМАНДЫ ПОЛЬЗОВАТЕЛЯ ==========
 
 async def plan_command(update: Update, context: CallbackContext):
     """Показывает текущий план пользователя"""
@@ -1242,7 +1371,7 @@ async def plan_command(update: Update, context: CallbackContext):
             "📋 Индивидуальный план еще не готов.\n\n"
             "Наш ассистент анализирует вашу анкету и скоро составит для вас "
             "персональный план. Обычно это занимает до 24 часов.\n\n"
-            "А пока вы можете посмотреть общий план: /plan"
+            "А пока вы можете использовать общие рекомендации для продуктивного дня!"
         )
         return
     
@@ -1279,7 +1408,7 @@ async def plan_command(update: Update, context: CallbackContext):
     await update.message.reply_text(plan_text)
 
 async def progress_command(update: Update, context: CallbackContext):
-    """Показывает статистику прогресса"""
+    """Показывает персонализированный прогресс"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
@@ -1287,21 +1416,88 @@ async def progress_command(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    stats = get_user_stats(user_id)
-    
-    await update.message.reply_text(
-        f"📊 Ваша статистика прогресса:\n\n"
-        f"✅ Выполнено задач за неделю: 18/25 (72%)\n"
-        f"🏃 Физическая активность: 4/5 дней\n"
-        f"📚 Обучение: 6/7 часов\n"
-        f"💤 Сон в среднем: 7.2 часа\n"
-        f"📨 Сообщений ассистенту: {stats['messages_count']}\n"
-        f"📅 С нами с: {stats['registration_date']}\n\n"
-        f"🎯 Отличные результаты! Продолжайте в том же духе!"
-    )
+    if not has_sufficient_data(user_id):
+        # Показываем сообщение о недостатке данных
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT MIN(progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+        result = c.fetchone()
+        start_date = result[0] if result and result[0] else datetime.now().strftime("%Y-%m-%d")
+        conn.close()
+
+        await update.message.reply_text(
+            f"📊 ВАШ ПРОГРЕСС ФОРМИРУЕТСЯ!\n\n"
+            f"Пока данных недостаточно для полной статистики.\n"
+            f"Отслеживаемые показатели:\n\n"
+            f"✓ Выполненные задачи: 0/∞\n"
+            f"✓ Настроение: пока нет оценок\n"
+            f"✓ Энергия: собираем данные\n"
+            f"✓ Водный баланс: отслеживается\n"
+            f"✓ Активность: мониторим с {start_date}\n\n"
+            f"Продолжайте работать с ботом ежедневно!\n"
+            f"Уже через 3 дня появится персональная статистика."
+        )
+    else:
+        # Получаем данные за последние 7 дней
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("""
+            SELECT 
+                COUNT(*) as total_days,
+                AVG(tasks_completed) as avg_tasks,
+                AVG(mood) as avg_mood,
+                AVG(energy) as avg_energy,
+                AVG(water_intake) as avg_water,
+                COUNT(DISTINCT progress_date) as active_days
+            FROM user_progress 
+            WHERE user_id = ? AND progress_date >= date('now', '-7 days')
+        """, (user_id,))
+        result = c.fetchone()
+        conn.close()
+
+        total_days = result[0] or 0
+        avg_tasks = result[1] or 0
+        avg_mood = result[2] or 0
+        avg_energy = result[3] or 0
+        avg_water = result[4] or 0
+        active_days = result[5] or 0
+
+        # Рассчитываем проценты и тренды
+        tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
+        mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
+        energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
+        water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
+        activity_str = f"{active_days}/7 дней"
+
+        # Тренды (упрощенная логика)
+        mood_trend = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
+        energy_trend = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
+        productivity_trend = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
+
+        # Персональный совет
+        advice = "Продолжайте в том же духе! Вы на правильном пути."
+        if avg_water and avg_water < 6:
+            advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
+        elif avg_mood and avg_mood < 6:
+            advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
+
+        await update.message.reply_text(
+            f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
+            f"📅 Период: последние 7 дней\n"
+            f"✅ Выполнено задач: {tasks_completed}\n"
+            f"😊 Среднее настроение: {mood_str}\n"
+            f"⚡ Уровень энергии: {energy_str}\n"
+            f"💧 Вода в среднем: {water_str}\n"
+            f"🏃 Активность: {activity_str}\n\n"
+            f"📈 ТРЕНДЫ:\n"
+            f"• Настроение: {mood_trend}\n"
+            f"• Энергия: {energy_trend}\n"
+            f"• Продуктивность: {productivity_trend}\n\n"
+            f"🎯 СОВЕТ: {advice}"
+        )
 
 async def profile_command(update: Update, context: CallbackContext):
-    """Показывает профиль пользователя"""
+    """Показывает новый профиль пользователя"""
     user = update.effective_user
     user_id = user.id
     update_user_activity(user_id)
@@ -1310,116 +1506,86 @@ async def profile_command(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    stats = get_user_stats(user_id)
+    # Получаем данные для профиля
+    main_goal = get_user_main_goal(user_id)
+    activity_streak = get_user_activity_streak(user_id)
+    level_info = get_user_level_info(user_id)
+    favorite_ritual = get_favorite_ritual(user_id)
     
-    profile_text = f"👤 Ваш профиль:\n\n"
-    profile_text += f"📛 Имя: {user.first_name}\n"
-    if user.last_name:
-        profile_text += f"📛 Фамилия: {user.last_name}\n"
-    if user.username:
-        profile_text += f"🔗 Username: @{user.username}\n"
-    profile_text += f"🆔 ID: {user.id}\n"
-    profile_text += f"📅 Зарегистрирован: {stats['registration_date']}\n"
-    profile_text += f"📨 Отправлено сообщений: {stats['messages_count']}\n\n"
-    profile_text += f"💎 Статус: Активный пользователь"
+    # Получаем статистику по планам
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ?", (user_id,))
+    total_plans = c.fetchone()[0] or 0
+
+    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ? AND status = 'completed'", (user_id,))
+    completed_plans = c.fetchone()[0] or 0
+
+    # Вычисляем процент выполнения планов
+    plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
+    
+    # Получаем средние метрики
+    c.execute("SELECT AVG(mood), AVG(energy) FROM user_progress WHERE user_id = ?", (user_id,))
+    metrics_result = c.fetchone()
+    avg_mood = metrics_result[0] or 0
+    avg_energy = metrics_result[1] or 0
+    
+    conn.close()
+    
+    # Формируем профиль
+    profile_text = (
+        f"👤 ВАШ ПРОФИЛЬ\n\n"
+        f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
+        f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
+        f"🔥 АКТИВНОСТЬ: {activity_streak} дней подряд\n\n"
+        f"🏆 ДОСТИЖЕНИЯ:\n"
+        f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
+        f"• Максимальная регулярность: {activity_streak} дней\n"
+        f"• Самый продуктивный день: понедельник\n"
+        f"• Любимый ритуал: {favorite_ritual}\n\n"
+        f"📈 ОСНОВНЫЕ МЕТРИКИ:\n"
+        f"• Средняя продуктивность: {avg_mood:.1f}/10\n"
+        f"• Баланс работа/отдых: 70/30\n"
+        f"• Регулярность: {min(activity_streak * 15, 100)}% дней активен\n\n"
+        f"🎮 УРОВЕНЬ: {level_info['level']}\n"
+        f"⭐ ДО СЛЕДУЮЩЕГО УРОВНЯ: {level_info['points_to_next']} очков\n\n"
+        f"🎯 БЛИЖАЙШАЯ ЦЕЛЬ: Следующий шаг к '{main_goal}'\n\n"
+        f"💡 РЕКОМЕНДАЦИИ:\n"
+        f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
+    )
     
     await update.message.reply_text(profile_text)
 
-async def chat_command(update: Update, context: CallbackContext):
-    """Начинает чат с ассистентом"""
-    user_id = update.effective_user.id
-    update_user_activity(user_id)
-    
-    if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
-        return
-    
-    await update.message.reply_text(
-        "💬 Чат с ассистентом открыт!\n\n"
-        "📝 Напишите ваш вопрос или сообщение, и ассистент ответит вам в ближайшее время.\n\n"
-        "⏰ Обычно ответ занимает не более 15-30 минут в рабочее время (9:00 - 18:00)."
-    )
-
 async def help_command(update: Update, context: CallbackContext):
-    """Показывает справку по командам"""
+    """Показывает обновленную справку по командам"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
-    help_text = "ℹ️ Справка по командам:\n\n"
-    
-    help_text += "🔹 Основные команды:\n"
-    help_text += "/start - Начать работу с ботом\n"
-    help_text += "/my_plan - Индивидуальный план\n"
-    help_text += "/plan - Общий план на сегодня\n"
-    help_text += "/progress - Статистика прогресса\n"
-    help_text += "/profile - Ваш профиль\n"
-    help_text += "/chat - Связаться с ассистентом\n"
-    help_text += "/help - Эта справка\n\n"
-    
-    help_text += "🔹 Команды для отслеживания:\n"
-    help_text += "/done <1-4> - Отметить задачу выполненной\n"
-    help_text += "/mood <1-10> - Оценить настроение\n"
-    help_text += "/energy <1-10> - Оценить уровень энергии\n"
-    help_text += "/water <стаканы> - Отслеживание воды\n\n"
-    
-    help_text += "💡 Просто напишите сообщение, чтобы связаться с ассистентом!"
+    help_text = (
+        "ℹ️ Справка по командам:\n\n"
+        
+        "🔹 Основные команды:\n"
+        "/start - Начать работу с ботом\n"
+        "/plan - План на сегодня\n"
+        "/progress - Статистика прогресса\n"
+        "/profile - Ваш профиль\n"
+        "/help - Эта справка\n\n"
+        
+        "🔹 Команды для отслеживания:\n"
+        "/done <1-4> - Отметить задачу выполненной\n"
+        "/mood <1-10> - Оценить настроение\n"
+        "/energy <1-10> - Оценить уровень энергии\n"
+        "/water <стаканы> - Отслеживание воды\n\n"
+        
+        "🔹 Напоминания:\n"
+        "/remind - Установить разовое напоминание\n"
+        "/reminders - Показать активные напоминания\n"
+        "/reminder_settings - Настроить автоматические напоминания\n\n"
+        
+        "💡 Просто напишите сообщение, чтобы связаться с ассистентом!"
+    )
     
     await update.message.reply_text(help_text)
-
-async def my_plan_command(update: Update, context: CallbackContext):
-    """Показывает индивидуальный план пользователя"""
-    user_id = update.effective_user.id
-    update_user_activity(user_id)
-    
-    if not check_user_registered(user_id):
-        await update.message.reply_text("❌ Сначала заполните анкету: /start")
-        return
-    
-    plan = get_user_plan_from_db(user_id)
-    
-    if not plan:
-        await update.message.reply_text(
-            "📋 Индивидуальный план еще не готов.\n\n"
-            "Наш ассистент анализирует вашу анкету и скоро составит для вас "
-            "персональный план. Обычно это занимает до 24 часов.\n\n"
-            "А пока вы можете посмотреть общий план: /plan"
-        )
-        return
-    
-    plan_text = f"📋 Ваш индивидуальный план на {plan[PLAN_FIELDS['plan_date']]}:\n\n"
-    
-    plan_text += "🌅 Утренние ритуалы:\n"
-    if plan[PLAN_FIELDS['morning_ritual1']]: 
-        plan_text += f"• {plan[PLAN_FIELDS['morning_ritual1']]}\n"
-    if plan[PLAN_FIELDS['morning_ritual2']]: 
-        plan_text += f"• {plan[PLAN_FIELDS['morning_ritual2']]}\n"
-    
-    plan_text += "\n🎯 Основные задачи:\n"
-    if plan[PLAN_FIELDS['task1']]: plan_text += f"1. {plan[PLAN_FIELDS['task1']]}\n"
-    if plan[PLAN_FIELDS['task2']]: plan_text += f"2. {plan[PLAN_FIELDS['task2']]}\n" 
-    if plan[PLAN_FIELDS['task3']]: plan_text += f"3. {plan[PLAN_FIELDS['task3']]}\n"
-    if plan[PLAN_FIELDS['task4']]: plan_text += f"4. {plan[PLAN_FIELDS['task4']]}\n"
-    
-    if plan[PLAN_FIELDS['lunch_break']]:
-        plan_text += f"\n🍽 Обеденный перерыв: {plan[PLAN_FIELDS['lunch_break']]}\n"
-    
-    plan_text += "\n🌙 Вечерние ритуалы:\n"
-    if plan[PLAN_FIELDS['evening_ritual1']]: plan_text += f"• {plan[PLAN_FIELDS['evening_ritual1']]}\n"
-    if plan[PLAN_FIELDS['evening_ritual2']]: plan_text += f"• {plan[PLAN_FIELDS['evening_ritual2']]}\n"
-    
-    if plan[PLAN_FIELDS['advice']]:
-        plan_text += f"\n💡 Совет ассистента: {plan[PLAN_FIELDS['advice']]}\n"
-    
-    if plan[PLAN_FIELDS['sleep_time']]:
-        plan_text += f"\n💤 Рекомендуемое время сна: {plan[PLAN_FIELDS['sleep_time']]}\n"
-    
-    if plan[PLAN_FIELDS['water_goal']]:
-        plan_text += f"💧 Цель по воде: {plan[PLAN_FIELDS['water_goal']]}\n"
-    
-    if plan[PLAN_FIELDS['activity_goal']]:
-        plan_text += f"🏃 Активность: {plan[PLAN_FIELDS['activity_goal']]}\n"
-    
-    await update.message.reply_text(plan_text)
 
 # ========== КОМАНДЫ ТРЕКИНГА ==========
 
@@ -1866,7 +2032,7 @@ async def set_plan_command(update: Update, context: CallbackContext):
             await context.bot.send_message(
                 chat_id=user_id,
                 text="🎉 Ваш индивидуальный план готов!\n\n"
-                     "Посмотреть его можно командой: /my_plan\n\n"
+                     "Посмотреть его можно командой: /plan\n\n"
                      "Ассистент составил для вас персональный план на основе вашей анкеты. "
                      "Удачи в выполнении! 💪"
             )
@@ -2059,14 +2225,12 @@ def main():
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("profile", profile_command))
-        application.add_handler(CommandHandler("chat", chat_command))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("stats", admin_stats))
         application.add_handler(CommandHandler("send", send_to_user))
         application.add_handler(CommandHandler("questionnaire", start))
         
         # Команды для пользователей
-        application.add_handler(CommandHandler("my_plan", my_plan_command))
         application.add_handler(CommandHandler("done", done_command))
         application.add_handler(CommandHandler("mood", mood_command))
         application.add_handler(CommandHandler("energy", energy_command))
@@ -2194,7 +2358,6 @@ async def send_evening_survey(context: CallbackContext):
             message = (
                 f"🌙 Добрый вечер, {first_name}!\n\n"
                 "📊 Как прошел ваш день?\n\n"
-                "Пожалуйста, ответьте на несколько вопросов:\n\n"
                 "1. 🎯 Выполнили стратегические задачи? (да/нет/частично)\n"
                 "2. 🌅 Выполнили утренние ритуалы? (да/нет/частично)\n"
                 "3. 🌙 Выполнили вечерние ритуалы? (да/нет/частично)\n"
@@ -2208,7 +2371,6 @@ async def send_evening_survey(context: CallbackContext):
                 "11. 📈 Что можно улучшить?\n"
                 "12. 🔄 Корректировки на завтра?\n"
                 "13. 💧 Сколько воды выпили? (стаканов)\n\n"
-                "Отправьте ответы в свободной форме 📝"
             )
             
             try:
