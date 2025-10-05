@@ -4407,5 +4407,184 @@ async def send_evening_survey(context: CallbackContext):
     except Exception as e:
         logger.error(f"❌ Ошибка в send_evening_survey: {e}")
 
+# ========== ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ ФУНКЦИИ ==========
+
+async def error_handler(update: Update, context: CallbackContext) -> None:
+    """Обрабатывает ошибки бота"""
+    try:
+        logger.error(f"❌ Ошибка в боте: {context.error}", exc_info=context.error)
+        
+        # Отправляем сообщение об ошибке администратору
+        error_msg = f"🚨 Ошибка в боте:\n{type(context.error).__name__}: {context.error}"
+        
+        # Обрезаем сообщение если слишком длинное
+        if len(error_msg) > 4000:
+            error_msg = error_msg[:4000] + "..."
+            
+        await context.bot.send_message(
+            chat_id=YOUR_CHAT_ID, 
+            text=error_msg
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в обработчике ошибок: {e}")
+
+async def cancel(update: Update, context: CallbackContext) -> int:
+    """Отменяет текущий диалог"""
+    await update.message.reply_text(
+        '❌ Операция отменена.',
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
+
+# Заглушки для отсутствующих функций
+async def create_plan_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def set_plan_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def admin_help(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def user_info_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def quick_plan_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def broadcast_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def update_sheets_command(update: Update, context: CallbackContext):
+    await update.message.reply_text("❌ Функция временно недоступна")
+
+async def button_callback(update: Update, context: CallbackContext):
+    """Обработчик нажатий на inline-кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    callback_data = query.data
+    
+    if callback_data.startswith('reply_'):
+        user_id = callback_data.replace('reply_', '')
+        await query.edit_message_text(f"✍️ Ответ пользователю {user_id}. Используйте /send {user_id} <сообщение>")
+    
+    elif callback_data.startswith('view_questionnaire_'):
+        user_id = callback_data.replace('view_questionnaire_', '')
+        await query.edit_message_text(f"📋 Просмотр анкеты пользователя {user_id}. Функция в разработке.")
+    
+    elif callback_data.startswith('stats_'):
+        user_id = callback_data.replace('stats_', '')
+        await query.edit_message_text(f"📊 Статистика пользователя {user_id}. Функция в разработке.")
+    
+    elif callback_data.startswith('create_plan_'):
+        user_id = callback_data.replace('create_plan_', '')
+        await query.edit_message_text(f"📋 Создание плана для пользователя {user_id}. Используйте /add_plan")
+
+async def handle_all_messages(update: Update, context: CallbackContext):
+    """Обрабатывает все текстовые сообщения"""
+    user_id = update.effective_user.id
+    message_text = update.message.text
+    
+    # Сохраняем входящее сообщение
+    save_message(user_id, message_text, 'incoming')
+    update_user_activity(user_id)
+    
+    # Проверяем, является ли сообщение напоминанием
+    if any(word in message_text.lower() for word in ['напомни', 'напоминай']):
+        await handle_reminder_nlp(update, context)
+        return
+    
+    # Если это не команда и не напоминание, просто сохраняем
+    logger.info(f"💬 Сообщение от {user_id}: {message_text}")
+
+def main():
+    """Основная функция запуска бота"""
+    try:
+        application = Application.builder().token(TOKEN).build()
+
+        # ✅ ДОБАВЛЯЕМ ОБРАБОТЧИК ОШИБОК
+        application.add_error_handler(error_handler)
+
+        # Основной обработчик диалога
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+        )
+
+        application.add_handler(conv_handler)
+        
+        # Команды для пользователей
+        application.add_handler(CommandHandler("plan", plan_command))
+        application.add_handler(CommandHandler("progress", progress_command))
+        application.add_handler(CommandHandler("profile", profile_command))
+        application.add_handler(CommandHandler("points_info", points_info_command))
+        application.add_handler(CommandHandler("help", help_command))
+        
+        application.add_handler(CommandHandler("done", done_command))
+        application.add_handler(CommandHandler("mood", mood_command))
+        application.add_handler(CommandHandler("energy", energy_command))
+        application.add_handler(CommandHandler("water", water_command))
+        
+        # Команды для напоминаний
+        application.add_handler(CommandHandler("remind_me", remind_me_command))
+        application.add_handler(CommandHandler("regular_remind", regular_remind_command))
+        application.add_handler(CommandHandler("my_reminders", my_reminders_command))
+        application.add_handler(CommandHandler("delete_remind", delete_remind_command))
+
+        # ✅ ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ КОМАНДЫ АДМИНИСТРАТОРА
+        application.add_handler(CommandHandler("create_plan", create_plan_command))
+        application.add_handler(CommandHandler("set_plan", set_plan_command))
+        application.add_handler(CommandHandler("admin_help", admin_help))
+        application.add_handler(CommandHandler("user_info", user_info_command))
+        application.add_handler(CommandHandler("quick_plan", quick_plan_command))
+        application.add_handler(CommandHandler("broadcast", broadcast_command))
+        application.add_handler(CommandHandler("update_sheets", update_sheets_command))
+        
+        # ✅ ДОБАВЛЯЕМ ОБРАБОТЧИКИ КНОПОК И СООБЩЕНИЙ
+        application.add_handler(CallbackQueryHandler(button_callback))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
+        
+        # Настройка JobQueue для автоматических сообщений
+        try:
+            job_queue = application.job_queue
+            if job_queue:
+                # Удаляем старые задачи
+                current_jobs = job_queue.jobs()
+                for job in current_jobs:
+                    job.schedule_removal()
+                
+                # Утреннее сообщение в 6:00
+                job_queue.run_daily(
+                    callback=send_morning_plan,
+                    time=dt_time(hour=3, minute=0),  # 6:00 MSK (UTC+3)
+                    days=tuple(range(7)),
+                    name="morning_plan"
+                )
+                
+                # Вечерний опрос в 21:00
+                job_queue.run_daily(
+                    callback=send_evening_survey,
+                    time=dt_time(hour=18, minute=0),  # 21:00 MSK (UTC+3)
+                    days=tuple(range(7)),
+                    name="evening_survey"
+                )
+                
+                logger.info("✅ JobQueue настроен для автоматических сообщений")
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка настройки JobQueue: {e}")
+
+        logger.info("🤖 Бот запускается...")
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска бота: {e}")
+
 if __name__ == '__main__':
     main()
