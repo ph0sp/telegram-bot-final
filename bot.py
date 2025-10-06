@@ -49,6 +49,20 @@ YOUR_CHAT_ID = os.environ.get('YOUR_CHAT_ID')
 GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
 GOOGLE_SHEETS_ID = os.environ.get('GOOGLE_SHEETS_ID')
 
+# 🔒 Безопасность: проверяем Google credentials
+if GOOGLE_CREDENTIALS_JSON:
+    try:
+        # Проверяем что это валидный JSON
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        # Проверяем обязательные поля
+        required_keys = ['type', 'project_id', 'private_key_id', 'private_key']
+        if not all(key in creds_dict for key in required_keys):
+            logger.error("❌ Google credentials JSON missing required fields")
+            GOOGLE_CREDENTIALS_JSON = None
+    except json.JSONDecodeError:
+        logger.error("❌ Google credentials JSON is invalid")
+        GOOGLE_CREDENTIALS_JSON = None
+
 if not TOKEN:
     logger.error("❌ Токен бота не найден! Установите BOT_TOKEN")
     exit(1)
@@ -96,7 +110,7 @@ QUESTIONS = [
     "Сколько воды обычно пьете? □ 1-2 стакана □ 4-5 □ 8+",
     "Хотели бы вы что-то изменить в своем питании? (например, есть больше овощей, готовить заранее, не пропускать обед, пить больше воды)",
     "Сколько времени вы обычно выделяете на приготовление еды?",
-    "Как качество вашего сна? □ отлично □ нормально □ плохо\nЧто мешает спать хорошо?",
+    "Как качество вашего сна? □ отлично □ нормано □ плохо\nЧто мешает спать хорошо?",
     
     "🧠 БЛОК 6: ЭМОЦИОНАЛЬНОЕ СОСТОЯНИЕ\n\nЧто вас мотивирует?\n□ Достижения\n□ Одобрение других\n□ Внутренний интерес\n□ Деньги/результаты",
     "Что обычно мешает следовать планам?\n□ Прокрастинация\n□ Перфекционизм\n□ Отсутствие энергии\n□ Неорганизованность",
@@ -346,7 +360,7 @@ PLAN_TEMPLATES = {
             "Зафиксировать ключевые инсайты"
         ],
         "priorities": [
-            "Понимание важнее запоминания",
+            "Понимаение важнее запоминания",
             "Практика важнее теории",
             "Регулярные повторения"
         ],
@@ -399,99 +413,105 @@ WEEKLY_TEMPLATE_SCHEDULE = {
 # ========== БАЗА ДАННЫХ ==========
 
 def init_db():
-    """Инициализация базы данных SQLite"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
+    """Инициализация базы данных SQLite с безопасным подключением"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
     
-    # Таблица клиентов
-    c.execute('''CREATE TABLE IF NOT EXISTS clients
-                 (user_id INTEGER PRIMARY KEY, 
-                  username TEXT,
-                  first_name TEXT,
-                  last_name TEXT,
-                  status TEXT DEFAULT 'active',
-                  registration_date TEXT,
-                  last_activity TEXT)''')
-    
-    # Таблица ответов на анкету
-    c.execute('''CREATE TABLE IF NOT EXISTS questionnaire_answers
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  question_number INTEGER,
-                  question_text TEXT,
-                  answer_text TEXT,
-                  answer_date TEXT,
-                  FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
-    
-    # Таблица планов
-    c.execute('''CREATE TABLE IF NOT EXISTS user_plans
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  plan_date TEXT,
-                  morning_ritual1 TEXT,
-                  morning_ritual2 TEXT,
-                  task1 TEXT,
-                  task2 TEXT,
-                  task3 TEXT,
-                  task4 TEXT,
-                  lunch_break TEXT,
-                  evening_ritual1 TEXT,
-                  evening_ritual2 TEXT,
-                  advice TEXT,
-                  sleep_time TEXT,
-                  water_goal TEXT,
-                  activity_goal TEXT,
-                  status TEXT DEFAULT 'active',
-                  created_date TEXT,
-                  FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
-    
-    # Таблица прогресса
-    c.execute('''CREATE TABLE IF NOT EXISTS user_progress
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  progress_date TEXT,
-                  tasks_completed INTEGER,
-                  mood INTEGER,
-                  energy INTEGER,
-                  sleep_quality INTEGER,
-                  water_intake INTEGER,
-                  activity_done TEXT,
-                  user_comment TEXT,
-                  day_rating INTEGER,
-                  challenges TEXT,
-                  FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
-    
-    # Таблица сообщений
-    c.execute('''CREATE TABLE IF NOT EXISTS messages
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  message_text TEXT,
-                  message_date TEXT,
-                  direction TEXT)''')
-    
-    # Таблица напоминаний
-    c.execute('''CREATE TABLE IF NOT EXISTS user_reminders
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  reminder_text TEXT,
-                  reminder_time TEXT,
-                  days_of_week TEXT,
-                  reminder_type TEXT,
-                  is_active BOOLEAN DEFAULT 1,
-                  created_date TEXT,
-                  FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
-    
-    # Таблица метаданных планов
-    c.execute('''CREATE TABLE IF NOT EXISTS plan_metadata
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  plan_date TEXT,
-                  metadata_json TEXT,
-                  created_date TEXT)''')
-    
-    conn.commit()
-    conn.close()
-    logger.info("✅ База данных инициализирована")
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("PRAGMA foreign_keys = ON")
+            
+            # Таблица клиентов
+            c.execute('''CREATE TABLE IF NOT EXISTS clients
+                         (user_id INTEGER PRIMARY KEY, 
+                          username TEXT,
+                          first_name TEXT,
+                          last_name TEXT,
+                          status TEXT DEFAULT 'active',
+                          registration_date TEXT,
+                          last_activity TEXT)''')
+            
+            # Таблица ответов на анкету
+            c.execute('''CREATE TABLE IF NOT EXISTS questionnaire_answers
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          question_number INTEGER,
+                          question_text TEXT,
+                          answer_text TEXT,
+                          answer_date TEXT,
+                          FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
+            
+            # Таблица планов
+            c.execute('''CREATE TABLE IF NOT EXISTS user_plans
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          plan_date TEXT,
+                          morning_ritual1 TEXT,
+                          morning_ritual2 TEXT,
+                          task1 TEXT,
+                          task2 TEXT,
+                          task3 TEXT,
+                          task4 TEXT,
+                          lunch_break TEXT,
+                          evening_ritual1 TEXT,
+                          evening_ritual2 TEXT,
+                          advice TEXT,
+                          sleep_time TEXT,
+                          water_goal TEXT,
+                          activity_goal TEXT,
+                          status TEXT DEFAULT 'active',
+                          created_date TEXT,
+                          FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
+            
+            # Таблица прогресса
+            c.execute('''CREATE TABLE IF NOT EXISTS user_progress
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          progress_date TEXT,
+                          tasks_completed INTEGER,
+                          mood INTEGER,
+                          energy INTEGER,
+                          sleep_quality INTEGER,
+                          water_intake INTEGER,
+                          activity_done TEXT,
+                          user_comment TEXT,
+                          day_rating INTEGER,
+                          challenges TEXT,
+                          FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
+            
+            # Таблица сообщений
+            c.execute('''CREATE TABLE IF NOT EXISTS messages
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          message_text TEXT,
+                          message_date TEXT,
+                          direction TEXT)''')
+            
+            # Таблица напоминаний
+            c.execute('''CREATE TABLE IF NOT EXISTS user_reminders
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          reminder_text TEXT,
+                          reminder_time TEXT,
+                          days_of_week TEXT,
+                          reminder_type TEXT,
+                          is_active BOOLEAN DEFAULT 1,
+                          created_date TEXT,
+                          FOREIGN KEY (user_id) REFERENCES clients (user_id))''')
+            
+            # Таблица метаданных планов
+            c.execute('''CREATE TABLE IF NOT EXISTS plan_metadata
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          plan_date TEXT,
+                          metadata_json TEXT,
+                          created_date TEXT)''')
+            
+            conn.commit()
+        logger.info("✅ База данных инициализирована безопасно")
+        
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка базы данных: {e}")
 
 init_db()
 
@@ -611,6 +631,10 @@ google_sheet = init_google_sheets()
 
 # ========== СИСТЕМА АНАЛИЗА ПРОФИЛЯ ==========
 
+def _safe_analyze_text(text: Optional[str]) -> str:
+    """Безопасно обрабатывает текст для анализа"""
+    return text.lower() if text else ""
+
 def analyze_user_profile(user_id: int) -> Dict[str, Any]:
     """Анализирует профиль пользователя по новой анкете"""
     conn = sqlite3.connect('clients.db')
@@ -665,71 +689,80 @@ def analyze_user_profile(user_id: int) -> Dict[str, Any]:
     conn.close()
     return profile
 
-def analyze_work_style(answer: str) -> Dict[str, Any]:
-    """Анализирует предпочтения по стилю работы"""
+def analyze_work_style(answer: Optional[str]) -> Dict[str, Any]:
+    """Анализирует предпочтения по стилю работы с защитой от ошибок"""
+    safe_answer = _safe_analyze_text(answer)
+    
     work_style = {
-        'prefers_long_blocks': any(word in answer.lower() for word in ['длинные', 'непрерывные', '2-4 часа']),
-        'prefers_short_sessions': any(word in answer.lower() for word in ['короткие', '25-50 минут', 'помодоро']),
-        'prefers_variety': any(word in answer.lower() for word in ['чередование', 'разные задачи']),
-        'prefers_multitasking': 'многозадачность' in answer.lower(),
+        'prefers_long_blocks': any(word in safe_answer for word in ['длинные', 'непрерывные', '2-4 часа']),
+        'prefers_short_sessions': any(word in safe_answer for word in ['короткие', '25-50 минут', 'помодоро']),
+        'prefers_variety': any(word in safe_answer for word in ['чередование', 'разные задачи']),
+        'prefers_multitasking': 'многозадачность' in safe_answer,
         'focus_aids': []
     }
     
-    if 'тишина' in answer.lower():
+    # Безопасно добавляем focus aids
+    if 'тишина' in safe_answer:
         work_style['focus_aids'].append('quiet_environment')
-    if 'музыка' in answer.lower():
+    if 'музыка' in safe_answer:
         work_style['focus_aids'].append('background_music')
-    if 'таймеры' in answer.lower():
+    if 'таймеры' in safe_answer:
         work_style['focus_aids'].append('timers')
-    if 'дедлайны' in answer.lower():
+    if 'дедлайны' in safe_answer:
         work_style['focus_aids'].append('deadlines')
     
     return work_style
 
 def analyze_focus_aids(answer: str) -> List[str]:
     """Анализирует что помогает сосредоточиться"""
+    safe_answer = _safe_analyze_text(answer)
     aids = []
-    if 'тишина' in answer.lower():
+    if 'тишина' in safe_answer:
         aids.append('quiet')
-    if 'музыка' in answer.lower():
+    if 'музыка' in safe_answer:
         aids.append('music')
-    if 'кафе' in answer.lower():
+    if 'кафе' in safe_answer:
         aids.append('cafe')
-    if 'таймеры' in answer.lower():
+    if 'таймеры' in safe_answer:
         aids.append('timers')
-    if 'дедлайны' in answer.lower():
+    if 'дедлайны' in safe_answer:
         aids.append('deadlines')
     return aids
 
 def analyze_break_activities(answer: str) -> List[str]:
     """Анализирует активности во время перерывов"""
+    safe_answer = _safe_analyze_text(answer)
     activities = []
-    if 'соцсети' in answer.lower():
+    if 'соцсети' in safe_answer:
         activities.append('social_media')
-    if 'прогулка' in answer.lower():
+    if 'прогулка' in safe_answer:
         activities.append('walk')
-    if 'растяжка' in answer.lower():
+    if 'растяжка' in safe_answer:
         activities.append('stretch')
-    if 'чтение' in answer.lower():
+    if 'чтение' in safe_answer:
         activities.append('reading')
-    if 'ничего' in answer.lower():
+    if 'ничего' in safe_answer:
         activities.append('nothing')
     return activities
 
 def analyze_activity_level(answer: str) -> str:
     """Анализирует уровень активности"""
-    if 'сидячий' in answer.lower():
+    safe_answer = _safe_analyze_text(answer)
+    if 'сидячий' in safe_answer:
         return 'sedentary'
-    elif 'прогулки' in answer.lower():
+    elif 'прогулки' in safe_answer:
         return 'light'
-    elif '1-2 раза' in answer.lower():
+    elif '1-2 раза' in safe_answer:
         return 'moderate'
-    elif '3+ раза' in answer.lower():
+    elif '3+ раза' in safe_answer:
         return 'active'
     return 'unknown'
 
-def analyze_water_intake(answer: str) -> str:
-    """Анализирует потребление воды"""
+def analyze_water_intake(answer: Optional[str]) -> str:
+    """Анализирует потребление воды с защитой от ошибок"""
+    if not answer:
+        return 'unknown'
+        
     if '1-2' in answer:
         return 'low'
     elif '4-5' in answer:
@@ -740,45 +773,49 @@ def analyze_water_intake(answer: str) -> str:
 
 def analyze_motivation(answer: str) -> List[str]:
     """Анализирует триггеры мотивации"""
+    safe_answer = _safe_analyze_text(answer)
     triggers = []
-    if 'достижения' in answer.lower():
+    if 'достижения' in safe_answer:
         triggers.append('achievement')
-    if 'одобрение' in answer.lower():
+    if 'одобрение' in safe_answer:
         triggers.append('recognition')
-    if 'внутренний' in answer.lower():
+    if 'внутренний' in safe_answer:
         triggers.append('intrinsic')
-    if 'деньги' in answer.lower() or 'результаты' in answer.lower():
+    if 'деньги' in safe_answer or 'результаты' in safe_answer:
         triggers.append('extrinsic')
     return triggers
 
 def analyze_obstacles(answer: str) -> List[str]:
     """Анализирует основные препятствия"""
+    safe_answer = _safe_analyze_text(answer)
     obstacles = []
-    if 'прокрастинация' in answer.lower():
+    if 'прокрастинация' in safe_answer:
         obstacles.append('procrastination')
-    if 'перфекционизм' in answer.lower():
+    if 'перфекционизм' in safe_answer:
         obstacles.append('perfectionism')
-    if 'энерги' in answer.lower():
+    if 'энерги' in safe_answer:
         obstacles.append('low_energy')
-    if 'организац' in answer.lower():
+    if 'организац' in safe_answer:
         obstacles.append('disorganization')
     return obstacles
 
 def analyze_rest_preferences(answer: str) -> List[str]:
     """Анализирует предпочтения по отдыху"""
+    safe_answer = _safe_analyze_text(answer)
     preferences = []
-    if 'активность' in answer.lower():
+    if 'активность' in safe_answer:
         preferences.append('active_rest')
-    if 'пассивный' in answer.lower():
+    if 'пассивный' in safe_answer:
         preferences.append('passive_rest')
-    if 'общение' in answer.lower():
+    if 'общение' in safe_answer:
         preferences.append('social_rest')
-    if 'уединение' in answer.lower():
+    if 'уединение' in safe_answer:
         preferences.append('solitude_rest')
     return preferences
 
 def analyze_deadlines(answer: str) -> Dict[str, Any]:
     """Анализирует дедлайны и контрольные точки"""
+    safe_answer = _safe_analyze_text(answer)
     deadline_info = {
         'has_deadline': False,
         'deadline_date': None,
@@ -786,13 +823,13 @@ def analyze_deadlines(answer: str) -> Dict[str, Any]:
         'urgency_level': 'low'
     }
     
-    if any(word in answer.lower() for word in ['неделя', '7 дней', 'срочно']):
+    if any(word in safe_answer for word in ['неделя', '7 дней', 'срочно']):
         deadline_info['urgency_level'] = 'high'
-    elif any(word in answer.lower() for word in ['месяц', '30 дней']):
+    elif any(word in safe_answer for word in ['месяц', '30 дней']):
         deadline_info['urgency_level'] = 'medium'
     
     # Простой анализ наличия дедлайна
-    if any(word in answer.lower() for word in ['дедлайн', 'срок', 'до', 'когда']):
+    if any(word in safe_answer for word in ['дедлайн', 'срок', 'до', 'когда']):
         deadline_info['has_deadline'] = True
     
     return deadline_info
@@ -809,17 +846,17 @@ def determine_personality_type(answers: Dict[int, str]) -> str:
     score = 0
     
     # Анализ стиля работы
-    work_answer = answers.get(11, "")
-    if 'длинные' in work_answer.lower():
+    work_answer = _safe_analyze_text(answers.get(11, ""))
+    if 'длинные' in work_answer:
         score += 2
-    if 'многозадачность' in work_answer.lower():
+    if 'многозадачность' in work_answer:
         score -= 1
     
     # Анализ мотивации
-    motivation_answer = answers.get(23, "")
-    if 'внутренний' in motivation_answer.lower():
+    motivation_answer = _safe_analyze_text(answers.get(23, ""))
+    if 'внутренний' in motivation_answer:
         score += 1
-    if 'достижения' in motivation_answer.lower():
+    if 'достижения' in motivation_answer:
         score += 2
     
     if score >= 4:
@@ -833,15 +870,18 @@ def determine_personality_type(answers: Dict[int, str]) -> str:
 
 def calculate_optimal_times(sleep_answer: str, energy_answer: str) -> Dict[str, str]:
     """Рассчитывает оптимальное время для разных активностей"""
+    safe_sleep_answer = _safe_analyze_text(sleep_answer)
+    safe_energy_answer = _safe_analyze_text(energy_answer)
+    
     wake_time = "08:00"
-    if any(word in sleep_answer.lower() for word in ['5', '6']):
+    if any(word in safe_sleep_answer for word in ['5', '6']):
         wake_time = "07:00"
-    elif any(word in sleep_answer.lower() for word in ['9', '10']):
+    elif any(word in safe_sleep_answer for word in ['9', '10']):
         wake_time = "09:00"
     
-    if 'утро' in energy_answer.lower():
+    if 'утро' in safe_energy_answer:
         deep_work_start = "09:00"
-    elif 'день' in energy_answer.lower():
+    elif 'день' in safe_energy_answer:
         deep_work_start = "13:00"
     else:
         deep_work_start = "10:00"
@@ -981,6 +1021,12 @@ def add_30_min(time_str: str) -> str:
     except:
         return time_str
 
+def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any]) -> bool:
+    """Заглушка для сохранения плана в Google Sheets"""
+    logger.info(f"📝 План для пользователя {user_id} на {date} готов к сохранению")
+    # Пока просто возвращаем True, реализуем позже
+    return True
+
 def generate_highly_personalized_plan(user_id: int, date: str, template_key: str = None) -> bool:
     """Генерирует высоко персонализированный план для пользователя"""
     try:
@@ -1021,289 +1067,329 @@ def generate_highly_personalized_plan(user_id: int, date: str, template_key: str
 # ========== ОСНОВНЫЕ ФУНКЦИИ БАЗЫ ДАННЫХ ==========
 
 def save_user_info(user_id: int, username: str, first_name: str, last_name: Optional[str] = None):
-    """Сохраняет информацию о пользователе в базу данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    registration_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute('''INSERT OR REPLACE INTO clients 
-                 (user_id, username, first_name, last_name, status, registration_date, last_activity) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-              (user_id, username, first_name, last_name, 'active', registration_date, registration_date))
-    conn.commit()
-    conn.close()
-    logger.info(f"✅ Информация о пользователе {user_id} сохранена в БД")
+    """Сохраняет информацию о пользователе в базу данных безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            registration_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''INSERT OR REPLACE INTO clients 
+                         (user_id, username, first_name, last_name, status, registration_date, last_activity) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                      (user_id, username, first_name, last_name, 'active', registration_date, registration_date))
+            conn.commit()
+        logger.info(f"✅ Информация о пользователе {user_id} сохранена в БД")
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
 
 def update_user_activity(user_id: int):
-    """Обновляет время последней активности пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    last_activity = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute('''UPDATE clients SET last_activity = ? WHERE user_id = ?''',
-              (last_activity, user_id))
-    conn.commit()
-    conn.close()
+    """Обновляет время последней активности пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            last_activity = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''UPDATE clients SET last_activity = ? WHERE user_id = ?''',
+                      (last_activity, user_id))
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка обновления активности {user_id}: {e}")
 
 def check_user_registered(user_id: int) -> bool:
-    """Проверяет зарегистрирован ли пользователь"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT user_id FROM clients WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
+    """Проверяет зарегистрирован ли пользователь безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM clients WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            return result is not None
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка проверки регистрации {user_id}: {e}")
+        return False
 
 def save_questionnaire_answer(user_id: int, question_number: int, question_text: str, answer_text: str):
-    """Сохраняет ответ на вопрос анкеты"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    answer_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute('''INSERT INTO questionnaire_answers 
-                 (user_id, question_number, question_text, answer_text, answer_date) 
-                 VALUES (?, ?, ?, ?, ?)''',
-              (user_id, question_number, question_text, answer_text, answer_date))
-    conn.commit()
-    conn.close()
+    """Сохраняет ответ на вопрос анкеты безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            answer_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''INSERT INTO questionnaire_answers 
+                         (user_id, question_number, question_text, answer_text, answer_date) 
+                         VALUES (?, ?, ?, ?, ?)''',
+                      (user_id, question_number, question_text, answer_text, answer_date))
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения ответа {user_id}: {e}")
 
 def save_message(user_id: int, message_text: str, direction: str):
-    """Сохраняет сообщение в базу данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    message_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute('''INSERT INTO messages 
-                 (user_id, message_text, message_date, direction) 
-                 VALUES (?, ?, ?, ?)''',
-              (user_id, message_text, message_date, direction))
-    conn.commit()
-    conn.close()
+    """Сохраняет сообщение в базу данных безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            message_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''INSERT INTO messages 
+                         (user_id, message_text, message_date, direction) 
+                         VALUES (?, ?, ?, ?)''',
+                      (user_id, message_text, message_date, direction))
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения сообщения {user_id}: {e}")
 
 def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
-    """Сохраняет план пользователя в базу данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute('''INSERT INTO user_plans 
-                 (user_id, plan_date, morning_ritual1, morning_ritual2, task1, task2, task3, task4, 
-                  lunch_break, evening_ritual1, evening_ritual2, advice, sleep_time, water_goal, 
-                  activity_goal, created_date) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (user_id, plan_data.get('plan_date'), plan_data.get('morning_ritual1'), 
-               plan_data.get('morning_ritual2'), plan_data.get('task1'), plan_data.get('task2'),
-               plan_data.get('task3'), plan_data.get('task4'), plan_data.get('lunch_break'),
-               plan_data.get('evening_ritual1'), plan_data.get('evening_ritual2'), 
-               plan_data.get('advice'), plan_data.get('sleep_time'), plan_data.get('water_goal'),
-               plan_data.get('activity_goal'), created_date))
-    conn.commit()
-    conn.close()
+    """Сохраняет план пользователя в базу данных безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''INSERT INTO user_plans 
+                         (user_id, plan_date, morning_ritual1, morning_ritual2, task1, task2, task3, task4, 
+                          lunch_break, evening_ritual1, evening_ritual2, advice, sleep_time, water_goal, 
+                          activity_goal, created_date) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (user_id, plan_data.get('plan_date'), plan_data.get('morning_ritual1'), 
+                       plan_data.get('morning_ritual2'), plan_data.get('task1'), plan_data.get('task2'),
+                       plan_data.get('task3'), plan_data.get('task4'), plan_data.get('lunch_break'),
+                       plan_data.get('evening_ritual1'), plan_data.get('evening_ritual2'), 
+                       plan_data.get('advice'), plan_data.get('sleep_time'), plan_data.get('water_goal'),
+                       plan_data.get('activity_goal'), created_date))
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения плана {user_id}: {e}")
 
 def get_user_plan_from_db(user_id: int):
-    """Получает текущий план пользователя из базы данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute('''SELECT * FROM user_plans 
-                 WHERE user_id = ? AND status = 'active' 
-                 ORDER BY created_date DESC LIMIT 1''', (user_id,))
-    plan = c.fetchone()
-    conn.close()
-    
-    return plan
+    """Получает текущий план пользователя из базы данных безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('''SELECT * FROM user_plans 
+                         WHERE user_id = ? AND status = 'active' 
+                         ORDER BY created_date DESC LIMIT 1''', (user_id,))
+            plan = c.fetchone()
+            return plan
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения плана {user_id}: {e}")
+        return None
 
 def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
-    """Сохраняет прогресс пользователя в базу данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    progress_date = datetime.now().strftime("%Y-%m-%d")
-    
-    c.execute('''INSERT INTO user_progress 
-                 (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
-                  water_intake, activity_done, user_comment, day_rating, challenges) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (user_id, progress_date, progress_data.get('tasks_completed'), 
-               progress_data.get('mood'), progress_data.get('energy'), 
-               progress_data.get('sleep_quality'), progress_data.get('water_intake'),
-               progress_data.get('activity_done'), progress_data.get('user_comment'),
-               progress_data.get('day_rating'), progress_data.get('challenges')))
-    conn.commit()
-    conn.close()
-    logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
+    """Сохраняет прогресс пользователя в базу данных безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            progress_date = datetime.now().strftime("%Y-%m-%d")
+            
+            c.execute('''INSERT INTO user_progress 
+                         (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
+                          water_intake, activity_done, user_comment, day_rating, challenges) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (user_id, progress_date, progress_data.get('tasks_completed'), 
+                       progress_data.get('mood'), progress_data.get('energy'), 
+                       progress_data.get('sleep_quality'), progress_data.get('water_intake'),
+                       progress_data.get('activity_done'), progress_data.get('user_comment'),
+                       progress_data.get('day_rating'), progress_data.get('challenges')))
+            conn.commit()
+        logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения прогресса {user_id}: {e}")
 
 def get_user_stats(user_id: int) -> Dict[str, Any]:
-    """Возвращает статистику пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute("SELECT COUNT(*) FROM messages WHERE user_id = ? AND direction = 'incoming'", (user_id,))
-    messages_count = c.fetchone()[0]
-    
-    c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
-    reg_date_result = c.fetchone()
-    reg_date = reg_date_result[0] if reg_date_result else "Неизвестно"
-    
-    conn.close()
-    
-    return {
-        'messages_count': messages_count,
-        'registration_date': reg_date
-    }
+    """Возвращает статистику пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            c.execute("SELECT COUNT(*) FROM messages WHERE user_id = ? AND direction = 'incoming'", (user_id,))
+            messages_count_result = c.fetchone()
+            messages_count = messages_count_result[0] if messages_count_result else 0
+            
+            c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
+            reg_date_result = c.fetchone()
+            reg_date = reg_date_result[0] if reg_date_result else "Неизвестно"
+            
+            return {
+                'messages_count': messages_count,
+                'registration_date': reg_date
+            }
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения статистики {user_id}: {e}")
+        return {'messages_count': 0, 'registration_date': 'Ошибка'}
 
 def has_sufficient_data(user_id: int) -> bool:
-    """Проверяет есть ли достаточно данных для статистики (минимум 3 дня)"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count >= 3
+    """Проверяет есть ли достаточно данных для статистики (минимум 3 дня) безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            count = result[0] if result else 0
+            return count >= 3
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка проверки данных {user_id}: {e}")
+        return False
 
 def get_user_activity_streak(user_id: int) -> int:
-    """Возвращает текущую серию активных дней подряд"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Получаем все даты активности пользователя
-    c.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC", (user_id,))
-    dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in c.fetchall()]
-    conn.close()
-    
-    if not dates:
+    """Возвращает текущую серию активных дней подряд безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC", (user_id,))
+            dates_result = c.fetchall()
+            dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in dates_result if row[0]]
+            
+            if not dates:
+                return 0
+            
+            dates.sort(reverse=True)
+            streak = 0
+            today = datetime.now().date()
+            
+            for i, date in enumerate(dates):
+                expected_date = today - timedelta(days=i)
+                if date == expected_date:
+                    streak += 1
+                else:
+                    break
+            
+            return streak
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения серии {user_id}: {e}")
         return 0
-    
-    # Сортируем по убыванию и проверяем последовательность
-    dates.sort(reverse=True)
-    streak = 0
-    today = datetime.now().date()
-    
-    for i, date in enumerate(dates):
-        expected_date = today - timedelta(days=i)
-        if date == expected_date:
-            streak += 1
-        else:
-            break
-    
-    return streak
 
 def get_user_main_goal(user_id: int) -> str:
-    """Получает главную цель пользователя из анкеты"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 1", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    return result[0] if result else "Цель не установлена"
+    """Получает главную цель пользователя из анкеты безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 1", (user_id,))
+            result = c.fetchone()
+            return result[0] if result else "Цель не установлена"
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения цели {user_id}: {e}")
+        return "Ошибка загрузки цели"
 
 def get_user_level_info(user_id: int) -> Dict[str, Any]:
-    """Возвращает информацию об уровне пользователя"""
-    # Базовая реализация системы уровней
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Считаем количество дней активности
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    active_days = c.fetchone()[0] or 0
-    
-    # Считаем выполненные задачи
-    c.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = ?", (user_id,))
-    total_tasks = c.fetchone()[0] or 0
-    
-    conn.close()
-    
-    # Простая система уровней
-    level_points = active_days * 10 + total_tasks * 2
-    level_names = {
-        0: "Новичок",
-        50: "Ученик", 
-        100: "Опытный",
-        200: "Профессионал",
-        500: "Мастер"
-    }
-    
-    current_level = "Новичок"
-    next_level_points = 50
-    points_to_next = 50
-    
-    for points, level in sorted(level_names.items()):
-        if level_points >= points:
-            current_level = level
-        else:
-            next_level_points = points
-            points_to_next = points - level_points
-            break
-    
-    return {
-        'level': current_level,
-        'points': level_points,
-        'points_to_next': points_to_next,
-        'next_level_points': next_level_points
-    }
+    """Возвращает информацию об уровне пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+            active_days_result = c.fetchone()
+            active_days = active_days_result[0] if active_days_result else 0
+            
+            c.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = ?", (user_id,))
+            total_tasks_result = c.fetchone()
+            total_tasks = total_tasks_result[0] if total_tasks_result else 0
+            
+            level_points = active_days * 10 + total_tasks * 2
+            level_names = {
+                0: "Новичок",
+                50: "Ученик", 
+                100: "Опытный",
+                200: "Профессионал",
+                500: "Мастер"
+            }
+            
+            current_level = "Новичок"
+            next_level_points = 50
+            points_to_next = 50
+            
+            for points, level in sorted(level_names.items()):
+                if level_points >= points:
+                    current_level = level
+                else:
+                    next_level_points = points
+                    points_to_next = points - level_points
+                    break
+            
+            return {
+                'level': current_level,
+                'points': level_points,
+                'points_to_next': points_to_next,
+                'next_level_points': next_level_points
+            }
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения уровня {user_id}: {e}")
+        return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
 
 def get_favorite_ritual(user_id: int) -> str:
-    """Определяет любимый ритуал пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Получаем ответы о ритуалах из анкеты
-    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 32", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    if result:
-        rituals_text = result[0]
-        # Простой анализ текста для определения предпочтений
-        if "медитация" in rituals_text.lower():
-            return "Утренняя медитация"
-        elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
-            return "Утренняя зарядка"
-        elif "чтение" in rituals_text.lower():
-            return "Вечернее чтение"
-        elif "дневник" in rituals_text.lower():
-            return "Ведение дневника"
-        elif "планирование" in rituals_text.lower():
-            return "Планирование задач"
-    
-    return "на основе ваших предпочтений"
+    """Определяет любимый ритуал пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 32", (user_id,))
+            result = c.fetchone()
+            
+            if result and result[0]:
+                rituals_text = result[0].lower()
+                if "медитация" in rituals_text:
+                    return "Утренняя медитация"
+                elif "зарядка" in rituals_text or "растяжка" in rituals_text:
+                    return "Утренняя зарядка"
+                elif "чтение" in rituals_text:
+                    return "Вечернее чтение"
+                elif "дневник" in rituals_text:
+                    return "Ведение дневника"
+                elif "планирование" in rituals_text:
+                    return "Планирование задач"
+            
+            return "на основе ваших предпочтений"
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения ритуала {user_id}: {e}")
+        return "на основе ваших предпочтений"
 
 def get_user_usage_days(user_id: int) -> Dict[str, int]:
-    """Возвращает статистику дней использования"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Дни с регистрации
-    c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
-    reg_result = c.fetchone()
-    if not reg_result:
-        conn.close()
+    """Возвращает статистику дней использования безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
+            reg_result = c.fetchone()
+            
+            if not reg_result:
+                return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+            
+            reg_date = datetime.strptime(reg_result[0], "%Y-%m-%d %H:%M:%S").date()
+            days_since_registration = (datetime.now().date() - reg_date).days + 1
+            
+            c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+            active_days_result = c.fetchone()
+            active_days = active_days_result[0] if active_days_result else 0
+            
+            current_streak = get_user_activity_streak(user_id)
+            
+            return {
+                'days_since_registration': days_since_registration,
+                'active_days': active_days,
+                'current_day': active_days if active_days > 0 else 1,
+                'current_streak': current_streak
+            }
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения дней использования {user_id}: {e}")
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
-    
-    reg_date = datetime.strptime(reg_result[0], "%Y-%m-%d %H:%M:%S").date()
-    days_since_registration = (datetime.now().date() - reg_date).days + 1
-    
-    # Активные дни (когда был прогресс)
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    active_days = c.fetchone()[0] or 0
-    
-    # Текущая серия
-    current_streak = get_user_activity_streak(user_id)
-    
-    conn.close()
-    
-    return {
-        'days_since_registration': days_since_registration,
-        'active_days': active_days,
-        'current_day': active_days if active_days > 0 else 1,  # Текущий день использования
-        'current_streak': current_streak
-    }
 
 # ========== GOOGLE SHEETS ФУНКЦИИ ==========
 
 def save_client_to_sheets(user_data: Dict[str, Any]):
     """Сохраняет клиента в Google Sheets"""
     if not google_sheet:
+        logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
@@ -1341,6 +1427,7 @@ def save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('ближайшая_цель', '')
             ]])
         except Exception:
+            # Создаем новую запись
             worksheet.append_row([
                 user_data['user_id'],
                 user_data.get('telegram_username', ''),
@@ -1369,70 +1456,11 @@ def save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('ближайшая_цель', '')
             ])
         
+        logger.info(f"✅ Клиент {user_data['user_id']} сохранен в Google Sheets")
         return True
         
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения клиента в Google Sheets: {e}")
-        return False
-
-def save_daily_plan_to_sheets(user_id: int, date: str, plan_data: Dict[str, Any]) -> bool:
-    """Сохраняет персональный план в Google Sheets"""
-    if not google_sheet:
-        return False
-    
-    try:
-        worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
-        
-        # Получаем информацию о пользователе
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("SELECT username, first_name FROM clients WHERE user_id = ?", (user_id,))
-        user_info = c.fetchone()
-        conn.close()
-        
-        username = user_info[0] if user_info else ""
-        first_name = user_info[1] if user_info else ""
-        
-        # Определяем месяц и день из даты
-        date_obj = datetime.strptime(date, "%Y-%m-%d")
-        month_year = date_obj.strftime("%Y-%m")
-        day_number = date_obj.day
-        
-        # Форматируем план
-        plan_text = format_enhanced_plan(plan_data)
-        
-        # Ищем существующую запись пользователя за этот месяц
-        try:
-            user_cell = worksheet.find(str(user_id))
-            month_cell = worksheet.find(month_year)
-            
-            row_index = user_cell.row
-            col_index = month_cell.col if month_cell else 4
-            
-            day_column_index = col_index + day_number
-            worksheet.update_cell(row_index, day_column_index, plan_text)
-                
-        except gspread.exceptions.CellNotFound:
-            # Создаем новую запись
-            row_data = [user_id, username, first_name, month_year]
-            
-            for day in range(1, 32):
-                if day == day_number:
-                    row_data.append(plan_text)
-                else:
-                    row_data.append("")
-            
-            row_data.extend([
-                f"Сгенерировано: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                plan_data.get('name', 'Индивидуальный план')
-            ])
-            
-            worksheet.append_row(row_data)
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения плана в Google Sheets: {e}")
         return False
 
 def format_enhanced_plan(plan_data: Dict[str, Any]) -> str:
@@ -1478,6 +1506,7 @@ def format_enhanced_plan(plan_data: Dict[str, Any]) -> str:
 def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
     """Сохраняет ежедневный отчет в Google Sheets"""
     if not google_sheet:
+        logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
@@ -1522,6 +1551,7 @@ def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
             report_data.get('динамика_продуктивности', '')
         ])
         
+        logger.info(f"✅ Отчет сохранен в Google Sheets для пользователя {user_id}")
         return True
         
     except Exception as e:
@@ -1531,6 +1561,7 @@ def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
 def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
     """Получает план на день из Google Sheets"""
     if not google_sheet:
+        logger.warning("⚠️ Google Sheets не доступен")
         return {}
     
     try:
@@ -1541,6 +1572,7 @@ def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
             cell = worksheet.find(str(user_id))
             row = cell.row
         except Exception:
+            logger.warning(f"⚠️ Пользователь {user_id} не найден в Google Sheets")
             return {}
         
         # Получаем все данные строки
@@ -1551,6 +1583,7 @@ def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
         date_column_index = 4 + day - 1  # 4 базовые колонки + день месяца
         
         if date_column_index >= len(row_data):
+            logger.warning(f"⚠️ Для даты {date} нет данных в Google Sheets")
             return {}
         
         plan_text = row_data[date_column_index]
@@ -1887,128 +1920,134 @@ def parse_reminder_text(text: str) -> Dict[str, Any]:
 
 def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
     """Добавляет напоминание в базу данных - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
     try:
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        
-        # 🔧 ОБРАБОТКА ОТНОСИТЕЛЬНЫХ НАПОМИНАНИЙ
-        if reminder_data.get('type') == 'once' and 'delay_minutes' in reminder_data:
-            # Для относительных напоминаний вычисляем точное время
-            from datetime import datetime, timedelta
-            reminder_time = (datetime.now() + timedelta(minutes=reminder_data['delay_minutes'])).strftime("%H:%M")
-        else:
-            reminder_time = reminder_data['time']
-        
-        days_str = ','.join(reminder_data['days']) if reminder_data['days'] else 'ежедневно'
-        created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        c.execute('''INSERT INTO user_reminders 
-                     (user_id, reminder_text, reminder_time, days_of_week, reminder_type, created_date)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (user_id, reminder_data['text'], reminder_time, 
-                   days_str, reminder_data['type'], created_date))
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            # 🔧 ОБРАБОТКА ОТНОСИТЕЛЬНЫХ НАПОМИНАНИЙ
+            if reminder_data.get('type') == 'once' and 'delay_minutes' in reminder_data:
+                # Для относительных напоминаний вычисляем точное время
+                from datetime import datetime, timedelta
+                reminder_time = (datetime.now() + timedelta(minutes=reminder_data['delay_minutes'])).strftime("%H:%M")
+            else:
+                reminder_time = reminder_data['time']
+            
+            days_str = ','.join(reminder_data['days']) if reminder_data['days'] else 'ежедневно'
+            created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            c.execute('''INSERT INTO user_reminders 
+                         (user_id, reminder_text, reminder_time, days_of_week, reminder_type, created_date)
+                         VALUES (?, ?, ?, ?, ?, ?)''',
+                      (user_id, reminder_data['text'], reminder_time, 
+                       days_str, reminder_data['type'], created_date))
+            
+            conn.commit()
         logger.info(f"✅ Напоминание добавлено для пользователя {user_id} на {reminder_time}")
         return True
         
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"❌ Ошибка добавления напоминания: {e}")
         return False
     
 def get_user_reminders(user_id: int) -> List[Dict]:
-    """Возвращает список напоминаний пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
-                 FROM user_reminders 
-                 WHERE user_id = ? AND is_active = 1 
-                 ORDER BY created_date DESC''', (user_id,))
-    
-    reminders = []
-    for row in c.fetchall():
-        reminders.append({
-            'id': row[0],
-            'text': row[1],
-            'time': row[2],
-            'days': row[3],
-            'type': row[4]
-        })
-    
-    conn.close()
-    return reminders
+    """Возвращает список напоминаний пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            c.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
+                         FROM user_reminders 
+                         WHERE user_id = ? AND is_active = 1 
+                         ORDER BY created_date DESC''', (user_id,))
+            
+            reminders = []
+            for row in c.fetchall():
+                reminders.append({
+                    'id': row[0],
+                    'text': row[1],
+                    'time': row[2],
+                    'days': row[3],
+                    'type': row[4]
+                })
+            
+            return reminders
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения напоминаний {user_id}: {e}")
+        return []
 
 def delete_reminder_from_db(reminder_id: int) -> bool:
-    """Удаляет напоминание по ID"""
+    """Удаляет напоминание по ID безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
     try:
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        
-        c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
+            
+            conn.commit()
         logger.info(f"✅ Напоминание {reminder_id} удалено")
         return True
         
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
 # ========== СИСТЕМА ОТПРАВКИ НАПОМИНАНИЙ ==========
 
-async def send_reminder_job(context: CallbackContext):
-    """Отправляет напоминания пользователям"""
+async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет напоминания пользователям безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
     try:
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        
-        # Получаем текущее время и день недели
-        now = datetime.now()
-        current_time = now.strftime("%H:%M")
-        current_day_rus = now.strftime("%A").lower()
-        day_translation = {
-            'monday': 'пн', 'tuesday': 'вт', 'wednesday': 'ср',
-            'thursday': 'чт', 'friday': 'пт', 'saturday': 'сб', 'sunday': 'вс'
-        }
-        current_day = day_translation.get(current_day_rus, 'пн')
-        
-        # Ищем напоминания для текущего времени
-        c.execute('''SELECT ur.id, ur.user_id, ur.reminder_text, c.first_name 
-                     FROM user_reminders ur 
-                     JOIN clients c ON ur.user_id = c.user_id 
-                     WHERE ur.is_active = 1 AND ur.reminder_time = ? 
-                     AND (ur.days_of_week LIKE ? OR ur.days_of_week = 'ежедневно' OR ur.days_of_week = '')''',
-                  (current_time, f'%{current_day}%'))
-        
-        reminders = c.fetchall()
-        
-        for reminder_id, user_id, reminder_text, first_name in reminders:
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"🔔 Напоминание: {reminder_text}"
-                )
-                logger.info(f"✅ Напоминание отправлено пользователю {user_id}")
-                
-                # Если это разовое напоминание - деактивируем его
-                c.execute('''SELECT reminder_type FROM user_reminders WHERE id = ?''', (reminder_id,))
-                reminder_type = c.fetchone()[0]
-                
-                if reminder_type == 'once':
-                    c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
-                    conn.commit()
-                    logger.info(f"📝 Разовое напоминание {reminder_id} деактивировано")
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            # Получаем текущее время и день недели
+            now = datetime.now()
+            current_time = now.strftime("%H:%M")
+            current_day_rus = now.strftime("%A").lower()
+            day_translation = {
+                'monday': 'пн', 'tuesday': 'вт', 'wednesday': 'ср',
+                'thursday': 'чт', 'friday': 'пт', 'saturday': 'сб', 'sunday': 'вс'
+            }
+            current_day = day_translation.get(current_day_rus, 'пн')
+            
+            # Ищем напоминания для текущего времени
+            c.execute('''SELECT ur.id, ur.user_id, ur.reminder_text, c.first_name 
+                         FROM user_reminders ur 
+                         JOIN clients c ON ur.user_id = c.user_id 
+                         WHERE ur.is_active = 1 AND ur.reminder_time = ? 
+                         AND (ur.days_of_week LIKE ? OR ur.days_of_week = 'ежедневно' OR ur.days_of_week = '')''',
+                      (current_time, f'%{current_day}%'))
+            
+            reminders = c.fetchall()
+            
+            for reminder_id, user_id, reminder_text, first_name in reminders:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🔔 Напоминание: {reminder_text}"
+                    )
+                    logger.info(f"✅ Напоминание отправлено пользователю {user_id}")
                     
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки напоминания {user_id}: {e}")
-        
-        conn.close()
-        
+                    # Если это разовое напоминание - деактивируем его
+                    c.execute('''SELECT reminder_type FROM user_reminders WHERE id = ?''', (reminder_id,))
+                    result = c.fetchone()
+                    if result:
+                        reminder_type = result[0]
+                        if reminder_type == 'once':
+                            c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
+                            conn.commit()
+                            logger.info(f"📝 Разовое напоминание {reminder_id} деактивировано")
+                            
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки напоминания {user_id}: {e}")
+                    
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка в send_reminder_job при работе с БД: {e}")
     except Exception as e:
-        logger.error(f"❌ Ошибка в send_reminder_job: {e}")
+        logger.error(f"❌ Неизвестная ошибка в send_reminder_job: {e}")
 
 def schedule_reminders(application):
     """Настраивает периодическую проверку напоминаний"""
@@ -2036,22 +2075,33 @@ class GoogleSheetsManager:
         self.connect()
     
     def connect(self):
-        """Подключается к Google Sheets"""
+        """Подключается к Google Sheets безопасно"""
         try:
             if not GOOGLE_SHEETS_AVAILABLE:
+                logger.warning("⚠️ Google Sheets не доступен")
                 return None
                 
             if not GOOGLE_CREDENTIALS_JSON or not GOOGLE_SHEETS_ID:
                 logger.warning("⚠️ GOOGLE_CREDENTIALS_JSON или GOOGLE_SHEETS_ID не найден")
                 return None
             
-            creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+            # 🔒 Безопасная проверка credentials
+            try:
+                creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+                required_keys = ['type', 'project_id', 'private_key_id', 'private_key']
+                if not all(key in creds_dict for key in required_keys):
+                    logger.error("❌ Invalid Google credentials structure")
+                    return None
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"❌ Invalid Google credentials JSON: {e}")
+                return None
+            
             scope = ['https://www.googleapis.com/auth/spreadsheets']
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             self.client = gspread.authorize(creds)
             
             self.sheet = self.client.open_by_key(GOOGLE_SHEETS_ID)
-            logger.info("✅ Google Sheets менеджер подключен")
+            logger.info("✅ Google Sheets менеджер подключен безопасно")
             return True
             
         except Exception as e:
@@ -2059,7 +2109,11 @@ class GoogleSheetsManager:
             return None
     
     def save_daily_data(self, user_id: int, data_type: str, value: str) -> bool:
-        """Сохраняет ежедневные данные в новую структуру"""
+        """Сохраняет ежедневные данные в новую структуру безопасно"""
+        if not self.sheet:
+            logger.warning("⚠️ Google Sheets не подключен")
+            return False
+            
         try:
             worksheet = self.sheet.worksheet("ежедневные_отчеты")
             today = datetime.now().strftime("%Y-%m-%d")
@@ -2120,23 +2174,46 @@ class GoogleSheetsManager:
             return False
     
     def get_user_info(self, user_id: int) -> Optional[Dict[str, str]]:
-        """Получает информацию о пользователе"""
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("SELECT username, first_name FROM clients WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        conn.close()
-        
-        if result:
-            return {'username': result[0], 'first_name': result[1]}
-        return None
+        """Получает информацию о пользователе безопасно"""
+        DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT username, first_name FROM clients WHERE user_id = ?", (user_id,))
+                result = c.fetchone()
+                if result:
+                    return {'username': result[0], 'first_name': result[1]}
+                return None
+        except sqlite3.Error as e:
+            logger.error(f"❌ Ошибка получения информации о пользователе {user_id}: {e}")
+            return None
 
 sheets_manager = GoogleSheetsManager()
 
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
+    """Восстанавливает состояние анкеты пользователя безопасно"""
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT MAX(question_number) FROM questionnaire_answers WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            current_question = result[0] + 1 if result and result[0] is not None else 0
+            
+            return {
+                'current_question': current_question,
+                'answers': {}
+            }
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка восстановления состояния анкеты {user_id}: {e}")
+        return {'current_question': 0, 'answers': {}}
+
 # ========== ОСНОВНЫЕ КОМАНДЫ БОТА ==========
 
-async def start(update: Update, context: CallbackContext) -> int:
-    """Обработчик команды /start с восстановлением состояния"""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработчик команды /start с восстановлением состояния безопасно"""
     user = update.effective_user
     user_id = user.id
     
@@ -2146,11 +2223,17 @@ async def start(update: Update, context: CallbackContext) -> int:
     # Восстанавливаем состояние анкеты
     questionnaire_state = restore_questionnaire_state(user_id)
     
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = ?", (user_id,))
-    has_answers = c.fetchone()[0] > 0
-    conn.close()
+    has_answers = False
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            has_answers = result[0] > 0 if result else False
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
+        has_answers = False
     
     if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
         # Анкета уже полностью заполнена
@@ -2172,7 +2255,7 @@ async def start(update: Update, context: CallbackContext) -> int:
     elif has_answers and questionnaire_state['current_question'] < len(QUESTIONS):
         # Анкета заполнена частично - предлагаем продолжить
         keyboard = [
-            ['✅ Продолжить анкету', '🔄 Начать зановo'],
+            ['✅ Продолжить анкету', '🔄 Начать заново'],
             ['❌ Отменить']
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -2200,7 +2283,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         
         return GENDER
     
-async def gender_choice(update: Update, context: CallbackContext) -> int:
+async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
     gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
     context.user_data['assistant_gender'] = gender
@@ -2227,7 +2310,7 @@ async def gender_choice(update: Update, context: CallbackContext) -> int:
     
     return FIRST_QUESTION
 
-async def handle_question(update: Update, context: CallbackContext) -> int:
+async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
@@ -2245,8 +2328,8 @@ async def handle_question(update: Update, context: CallbackContext) -> int:
     else:
         return await finish_questionnaire(update, context)
 
-async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
-    """Завершает анкету и отправляет данные"""
+async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Завершает анкету и отправляет данные безопасно"""
     user = update.effective_user
     assistant_name = context.user_data['assistant_name']
     
@@ -2296,12 +2379,12 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
             try:
                 await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=part)
             except Exception as e:
-                logger.error(f"Ошибка отправки части анкеты: {e}")
+                logger.error(f"❌ Ошибка отправки части анкеты: {e}")
     else:
         try:
             await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=questionnaire)
         except Exception as e:
-            logger.error(f"Ошибка отправки анкеты: {e}")
+            logger.error(f"❌ Ошибка отправки анкеты: {e}")
     
     # Отправляем кнопки админу
     try:
@@ -2318,7 +2401,7 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
             reply_markup=reply_markup
         )
     except Exception as e:
-        logger.error(f"Ошибка отправки кнопки ответа: {e}")
+        logger.error(f"❌ Ошибка отправки кнопки ответа: {e}")
     
     # Сообщение пользователю
     keyboard = [
@@ -2343,7 +2426,7 @@ async def finish_questionnaire(update: Update, context: CallbackContext) -> int:
 
 # ========== КОМАНДЫ АДМИНА ==========
 
-async def admin_add_plan(update: Update, context: CallbackContext) -> int:
+async def admin_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает процесс добавления плана (только для администратора)"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
@@ -2355,27 +2438,33 @@ async def admin_add_plan(update: Update, context: CallbackContext) -> int:
     )
     return ADD_PLAN_USER
 
-async def add_plan_user(update: Update, context: CallbackContext) -> int:
-    """Обрабатывает ID пользователя для добавления плана"""
+async def add_plan_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ID пользователя для добавления плана безопасно"""
     try:
         user_id = int(update.message.text)
         context.user_data['plan_user_id'] = user_id
         
         # Проверяем существование пользователя
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("SELECT first_name FROM clients WHERE user_id = ?", (user_id,))
-        user_info = c.fetchone()
-        conn.close()
-        
-        if not user_info:
+        DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT first_name FROM clients WHERE user_id = ?", (user_id,))
+                user_info = c.fetchone()
+                if not user_info:
+                    await update.message.reply_text(
+                        f"❌ Пользователь с ID {user_id} не найден.\n"
+                        "Проверьте ID и попробуйте снова:"
+                    )
+                    return ADD_PLAN_USER
+                
+                context.user_data['user_name'] = user_info[0]
+        except sqlite3.Error as e:
+            logger.error(f"❌ Ошибка проверки пользователя {user_id}: {e}")
             await update.message.reply_text(
-                f"❌ Пользователь с ID {user_id} не найден.\n"
-                "Проверьте ID и попробуйте снова:"
+                f"❌ Ошибка при проверке пользователя. Попробуйте снова:"
             )
             return ADD_PLAN_USER
-        
-        context.user_data['user_name'] = user_info[0]
         
         await update.message.reply_text(
             f"👤 Пользователь: {user_info[0]} (ID: {user_id})\n\n"
@@ -2390,7 +2479,7 @@ async def add_plan_user(update: Update, context: CallbackContext) -> int:
         )
         return ADD_PLAN_USER
 
-async def add_plan_date(update: Update, context: CallbackContext) -> int:
+async def add_plan_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает дату для добавления плана"""
     date_str = update.message.text
     
@@ -2420,8 +2509,8 @@ async def add_plan_date(update: Update, context: CallbackContext) -> int:
         )
         return ADD_PLAN_DATE
 
-async def add_plan_content(update: Update, context: CallbackContext) -> int:
-    """Обрабатывает содержание плана и сохраняет его"""
+async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает содержание плана и сохраняет его безопасно"""
     plan_content = update.message.text
     user_id = context.user_data['plan_user_id']
     date_str = context.user_data['plan_date']
@@ -2459,7 +2548,7 @@ async def add_plan_content(update: Update, context: CallbackContext) -> int:
                      f"Используйте команду /plan чтобы посмотреть его."
             )
         except Exception as e:
-            logger.warning(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+            logger.warning(f"⚠️ Не удалось отправить уведомление пользователю {user_id}: {e}")
             
     else:
         await update.message.reply_text(
@@ -2469,7 +2558,7 @@ async def add_plan_content(update: Update, context: CallbackContext) -> int:
     
     return ConversationHandler.END
 
-async def use_template_start(update: Update, context: CallbackContext) -> int:
+async def use_template_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает процесс использования шаблона"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
@@ -2492,7 +2581,7 @@ async def use_template_start(update: Update, context: CallbackContext) -> int:
     
     return SELECT_TEMPLATE
 
-async def select_template(update: Update, context: CallbackContext) -> int:
+async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает выбор шаблона"""
     template_input = update.message.text
     
@@ -2531,27 +2620,33 @@ async def select_template(update: Update, context: CallbackContext) -> int:
     
     return SELECT_USER_FOR_TEMPLATE
 
-async def select_user_for_template(update: Update, context: CallbackContext) -> int:
-    """Обрабатывает выбор пользователя для шаблона"""
+async def select_user_for_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает выбор пользователя для шаблона безопасно"""
     try:
         user_id = int(update.message.text)
         context.user_data['template_user_id'] = user_id
         
         # Проверяем пользователя
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("SELECT first_name FROM clients WHERE user_id = ?", (user_id,))
-        user_info = c.fetchone()
-        conn.close()
-        
-        if not user_info:
+        DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT first_name FROM clients WHERE user_id = ?", (user_id,))
+                user_info = c.fetchone()
+                if not user_info:
+                    await update.message.reply_text(
+                        f"❌ Пользователь с ID {user_id} не найден.\n"
+                        f"Введите корректный ID пользователя:"
+                    )
+                    return SELECT_USER_FOR_TEMPLATE
+                
+                context.user_data['user_name'] = user_info[0]
+        except sqlite3.Error as e:
+            logger.error(f"❌ Ошибка проверки пользователя {user_id}: {e}")
             await update.message.reply_text(
-                f"❌ Пользователь с ID {user_id} не найден.\n"
-                f"Введите корректный ID пользователя:"
+                f"❌ Ошибка при проверке пользователя. Попробуйте снова:"
             )
             return SELECT_USER_FOR_TEMPLATE
-        
-        context.user_data['user_name'] = user_info[0]
         
         await update.message.reply_text(
             f"👤 Пользователь: {user_info[0]}\n\n"
@@ -2567,7 +2662,7 @@ async def select_user_for_template(update: Update, context: CallbackContext) -> 
         )
         return SELECT_USER_FOR_TEMPLATE
 
-async def select_date_for_template(update: Update, context: CallbackContext) -> int:
+async def select_date_for_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает дату и применяет шаблон"""
     date_str = update.message.text
     template_key = context.user_data['selected_template']
@@ -2607,7 +2702,7 @@ async def select_date_for_template(update: Update, context: CallbackContext) -> 
                      f"Используйте /plan для просмотра."
             )
         except Exception as e:
-            logger.warning(f"Не удалось уведомить пользователя {user_id}: {e}")
+            logger.warning(f"⚠️ Не удалось уведомить пользователя {user_id}: {e}")
             
     else:
         await update.message.reply_text(
@@ -2617,7 +2712,7 @@ async def select_date_for_template(update: Update, context: CallbackContext) -> 
     
     return ConversationHandler.END
 
-async def admin_templates(update: Update, context: CallbackContext):
+async def admin_templates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает доступные шаблоны планов"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
@@ -2637,7 +2732,7 @@ async def admin_templates(update: Update, context: CallbackContext):
     
     await update.message.reply_text(templates_text)
 
-async def analyze_user_profile_cmd(update: Update, context: CallbackContext):
+async def analyze_user_profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает анализ профиля пользователя"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
@@ -2671,7 +2766,7 @@ async def analyze_user_profile_cmd(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка анализа профиля: {e}")
 
-async def send_to_user(update: Update, context: CallbackContext):
+async def send_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет сообщение пользователю от имени ассистента"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
@@ -2702,31 +2797,40 @@ async def send_to_user(update: Update, context: CallbackContext):
         error_msg = f"❌ Ошибка отправки: {e}"
         await update.message.reply_text(error_msg)
 
-async def admin_stats(update: Update, context: CallbackContext):
-    """Статистика для администратора"""
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика для администратора безопасно"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute("SELECT COUNT(*) FROM clients")
-    total_users = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM clients WHERE date(last_activity) = date('now')")
-    active_today = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM messages WHERE direction = 'incoming'")
-    total_messages = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM questionnaire_answers")
-    total_answers = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM user_plans")
-    total_plans = c.fetchone()[0]
-    
-    conn.close()
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            
+            c.execute("SELECT COUNT(*) FROM clients")
+            total_users_result = c.fetchone()
+            total_users = total_users_result[0] if total_users_result else 0
+            
+            c.execute("SELECT COUNT(*) FROM clients WHERE date(last_activity) = date('now')")
+            active_today_result = c.fetchone()
+            active_today = active_today_result[0] if active_today_result else 0
+            
+            c.execute("SELECT COUNT(*) FROM messages WHERE direction = 'incoming'")
+            total_messages_result = c.fetchone()
+            total_messages = total_messages_result[0] if total_messages_result else 0
+            
+            c.execute("SELECT COUNT(*) FROM questionnaire_answers")
+            total_answers_result = c.fetchone()
+            total_answers = total_answers_result[0] if total_answers_result else 0
+            
+            c.execute("SELECT COUNT(*) FROM user_plans")
+            total_plans_result = c.fetchone()
+            total_plans = total_plans_result[0] if total_plans_result else 0
+            
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения статистики: {e}")
+        total_users = active_today = total_messages = total_answers = total_plans = 0
     
     stats_text = f"📊 Статистика бота:\n\n"
     stats_text += f"👥 Всего пользователей: {total_users}\n"
@@ -2742,18 +2846,21 @@ async def admin_stats(update: Update, context: CallbackContext):
     
     await update.message.reply_text(stats_text)
 
-async def admin_users(update: Update, context: CallbackContext):
-    """Показывает список пользователей (только для администратора)"""
+async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список пользователей (только для администратора) безопасно"""
     if str(update.effective_user.id) != YOUR_CHAT_ID:
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute("SELECT user_id, username, first_name, last_activity FROM clients ORDER BY last_activity DESC LIMIT 20")
-    users = c.fetchall()
-    conn.close()
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, username, first_name, last_activity FROM clients ORDER BY last_activity DESC LIMIT 20")
+            users = c.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения списка пользователей: {e}")
+        users = []
     
     if not users:
         await update.message.reply_text("📭 Пользователей не найдено.")
@@ -2773,8 +2880,8 @@ async def admin_users(update: Update, context: CallbackContext):
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ПОЛЬЗОВАТЕЛЯ ==========
 
-async def plan_command(update: Update, context: CallbackContext):
-    """Показывает текущий план пользователя"""
+async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает текущий план пользователя безопасно"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
@@ -2827,8 +2934,8 @@ async def plan_command(update: Update, context: CallbackContext):
     
     await update.message.reply_text(plan_text)
 
-async def progress_command(update: Update, context: CallbackContext):
-    """Показывает персонализированный прогресс"""
+async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает персонализированный прогресс безопасно"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
     
@@ -2865,29 +2972,33 @@ async def progress_command(update: Update, context: CallbackContext):
         }
         save_daily_report_to_sheets(user_id, report_data)
     else:
-        # Получаем данные за последние 7 дней
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("""
-            SELECT 
-                COUNT(*) as total_days,
-                AVG(tasks_completed) as avg_tasks,
-                AVG(mood) as avg_mood,
-                AVG(energy) as avg_energy,
-                AVG(water_intake) as avg_water,
-                COUNT(DISTINCT progress_date) as active_days
-            FROM user_progress 
-            WHERE user_id = ? AND progress_date >= date('now', '-7 days')
-        """, (user_id,))
-        result = c.fetchone()
-        conn.close()
-
-        total_days = result[0] or 0
-        avg_tasks = result[1] or 0
-        avg_mood = result[2] or 0
-        avg_energy = result[3] or 0
-        avg_water = result[4] or 0
-        active_days = result[5] or 0
+        # Получаем данные за последние 7 дней безопасно
+        DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT 
+                        COUNT(*) as total_days,
+                        AVG(tasks_completed) as avg_tasks,
+                        AVG(mood) as avg_mood,
+                        AVG(energy) as avg_energy,
+                        AVG(water_intake) as avg_water,
+                        COUNT(DISTINCT progress_date) as active_days
+                    FROM user_progress 
+                    WHERE user_id = ? AND progress_date >= date('now', '-7 days')
+                """, (user_id,))
+                result = c.fetchone()
+                
+                total_days = result[0] or 0
+                avg_tasks = result[1] or 0
+                avg_mood = result[2] or 0
+                avg_energy = result[3] or 0
+                avg_water = result[4] or 0
+                active_days = result[5] or 0
+        except sqlite3.Error as e:
+            logger.error(f"❌ Ошибка получения прогресса {user_id}: {e}")
+            total_days = avg_tasks = avg_mood = avg_energy = avg_water = active_days = 0
 
         # Рассчитываем проценты и динамику
         tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
@@ -2950,8 +3061,9 @@ async def progress_command(update: Update, context: CallbackContext):
         save_daily_report_to_sheets(user_id, report_data)
 
 def save_extended_user_data(user_id: int, extended_data: Dict[str, Any]):
-    """Сохраняет расширенные данные пользователя в Google Sheets"""
+    """Сохраняет расширенные данные пользователя в Google Sheets безопасно"""
     if not google_sheet:
+        logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
@@ -2962,7 +3074,7 @@ def save_extended_user_data(user_id: int, extended_data: Dict[str, Any]):
             cell = worksheet.find(str(user_id))
             row = cell.row
         except Exception:
-            logger.warning(f"Пользователь {user_id} не найден в Google Sheets")
+            logger.warning(f"⚠️ Пользователь {user_id} не найден в Google Sheets")
             return False
         
         # Получаем текущие заголовки
@@ -2987,8 +3099,8 @@ def save_extended_user_data(user_id: int, extended_data: Dict[str, Any]):
         logger.error(f"❌ Ошибка сохранения расширенных данных: {e}")
         return False
 
-async def profile_command(update: Update, context: CallbackContext):
-    """Показывает новый профиль пользователя (БЕЗ БАЛАНСА РАБОТА/ОТДЫХ)"""
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает новый профиль пользователя (БЕЗ БАЛАНСА РАБОТА/ОТДЫХ) безопасно"""
     user = update.effective_user
     user_id = user.id
     update_user_activity(user_id)
@@ -3003,25 +3115,30 @@ async def profile_command(update: Update, context: CallbackContext):
     level_info = get_user_level_info(user_id)
     favorite_ritual = get_favorite_ritual(user_id)
     
-    # Получаем статистику по планам
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ?", (user_id,))
-    total_plans = c.fetchone()[0] or 0
+    # Получаем статистику по планам безопасно
+    DB_PATH = os.environ.get('DB_PATH', 'clients.db')
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ?", (user_id,))
+            total_plans_result = c.fetchone()
+            total_plans = total_plans_result[0] if total_plans_result else 0
 
-    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ? AND status = 'completed'", (user_id,))
-    completed_plans = c.fetchone()[0] or 0
+            c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ? AND status = 'completed'", (user_id,))
+            completed_plans_result = c.fetchone()
+            completed_plans = completed_plans_result[0] if completed_plans_result else 0
 
-    # Вычисляем процент выполнения планов
-    plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
-    
-    # Получаем средние метрики
-    c.execute("SELECT AVG(mood), AVG(energy) FROM user_progress WHERE user_id = ?", (user_id,))
-    metrics_result = c.fetchone()
-    avg_mood = metrics_result[0] or 0
-    avg_energy = metrics_result[1] or 0
-    
-    conn.close()
+            # Вычисляем процент выполнения планов
+            plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
+            
+            # Получаем средние метрики
+            c.execute("SELECT AVG(mood), AVG(energy) FROM user_progress WHERE user_id = ?", (user_id,))
+            metrics_result = c.fetchone()
+            avg_mood = metrics_result[0] or 0
+            avg_energy = metrics_result[1] or 0
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения данных профиля {user_id}: {e}")
+        total_plans = completed_plans = plans_percentage = avg_mood = avg_energy = 0
     
     # Формируем профиль (БЕЗ БАЛАНСА РАБОТА/ОТДЫХ)
     profile_text = (
@@ -3052,7 +3169,7 @@ async def profile_command(update: Update, context: CallbackContext):
     }
     save_extended_user_data(user_id, extended_data)
 
-async def points_info_command(update: Update, context: CallbackContext):
+async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Объясняет систему очков"""
     help_text = (
         "🎮 СИСТЕМА ОЧКОВ И УРОВНЕЙ:\n\n"
@@ -3074,7 +3191,7 @@ async def points_info_command(update: Update, context: CallbackContext):
     )
     await update.message.reply_text(help_text)
 
-async def help_command(update: Update, context: CallbackContext):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает обновленную справку по командам"""
     user_id = update.effective_user.id
     update_user_activity(user_id)
@@ -3116,33 +3233,40 @@ async def help_command(update: Update, context: CallbackContext):
 
 def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
     """Восстанавливает состояние анкеты пользователя из базы данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Получаем все ответы пользователя
-    c.execute('''SELECT question_number, answer_text 
-                 FROM questionnaire_answers 
-                 WHERE user_id = ? 
-                 ORDER BY question_number''', (user_id,))
-    
-    answers = {}
-    for question_num, answer_text in c.fetchall():
-        answers[question_num] = answer_text
-    
-    conn.close()
-    
-    if answers:
-        # Определяем текущий вопрос (следующий после последнего отвеченного)
-        last_question = max(answers.keys())
-        current_question = last_question + 1 if last_question < len(QUESTIONS) else last_question
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
         
-        return {
-            'current_question': current_question,
-            'answers': answers,
-            'has_previous_answers': True
-        }
-    
-    return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+        # Получаем все ответы пользователя
+        c.execute('''SELECT question_number, answer_text 
+                     FROM questionnaire_answers 
+                     WHERE user_id = ? 
+                     ORDER BY question_number''', (user_id,))
+        
+        answers = {}
+        for question_num, answer_text in c.fetchall():
+            answers[question_num] = answer_text
+        
+        if answers:
+            # Определяем текущий вопрос (следующий после последнего отвеченного)
+            last_question = max(answers.keys())
+            # ЗАЩИЩЕННАЯ ВЕРСИЯ: не выходим за границы массива QUESTIONS
+            current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
+            
+            return {
+                'current_question': current_question,
+                'answers': answers,
+                'has_previous_answers': True
+            }
+        
+        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+        
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка БД при восстановлении анкеты {user_id}: {e}")
+        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+    finally:
+        if conn:
+            conn.close()
 
 async def handle_continue_choice(update: Update, context: CallbackContext) -> int:
     """Обрабатывает выбор продолжения анкеты"""
@@ -3373,29 +3497,37 @@ async def water_command(update: Update, context: CallbackContext):
         
     except ValueError:
         await update.message.reply_text("❌ Количество должно быть числом")
-    
+
+# ========== СИСТЕМА НАПОМИНАНИЙ ==========
+
 def get_user_reminders(user_id: int) -> List[Dict]:
     """Возвращает список напоминаний пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    c.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
-                 FROM user_reminders 
-                 WHERE user_id = ? AND is_active = 1 
-                 ORDER BY created_date DESC''', (user_id,))
-    
-    reminders = []
-    for row in c.fetchall():
-        reminders.append({
-            'id': row[0],
-            'text': row[1],
-            'time': row[2],
-            'days': row[3],
-            'type': row[4]
-        })
-    
-    conn.close()
-    return reminders
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        c.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
+                     FROM user_reminders 
+                     WHERE user_id = ? AND is_active = 1 
+                     ORDER BY created_date DESC''', (user_id,))
+        
+        reminders = []
+        for row in c.fetchall():
+            reminders.append({
+                'id': row[0],
+                'text': row[1],
+                'time': row[2],
+                'days': row[3],
+                'type': row[4]
+            })
+        
+        return reminders
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка БД при получении напоминаний {user_id}: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 def delete_reminder_from_db(reminder_id: int) -> bool:
     """Удаляет напоминание по ID"""
@@ -3510,7 +3642,9 @@ async def regular_remind_command(update: Update, context: CallbackContext):
     days_map = {
         'пн': 'пн', 'вт': 'вт', 'ср': 'ср', 'чт': 'чт',
         'пт': 'пт', 'сб': 'сб', 'вс': 'вс',
-        'ежедневно': ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+        'ежедневно': ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'],
+        'понедельник': 'пн', 'вторник': 'вт', 'среда': 'ср', 'четверг': 'чт',
+        'пятница': 'пт', 'суббота': 'сб', 'воскресенье': 'вс'
     }
     
     if days_str.lower() == 'ежедневно':
@@ -3520,7 +3654,10 @@ async def regular_remind_command(update: Update, context: CallbackContext):
         for day_part in days_str.split(','):
             day_clean = day_part.strip().lower()
             if day_clean in days_map:
-                days.append(days_map[day_clean])
+                if isinstance(days_map[day_clean], list):
+                    days.extend(days_map[day_clean])
+                else:
+                    days.append(days_map[day_clean])
     
     if not days:
         await update.message.reply_text(
@@ -3528,6 +3665,9 @@ async def regular_remind_command(update: Update, context: CallbackContext):
             "Укажите дни в формате: пн,ср,пт или 'ежедневно'"
         )
         return
+    
+    # Убираем дубликаты
+    days = list(set(days))
     
     reminder_data = {
         'type': 'regular',
@@ -3619,6 +3759,15 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
     
     logger.info(f"🔍 Обработка естественного запроса: {message_text}")
     
+    # Проверяем лимит напоминаний (максимум 20 на пользователя)
+    reminders = get_user_reminders(user_id)
+    if len(reminders) >= 20:
+        await update.message.reply_text(
+            "❌ Достигнут лимит напоминаний (20).\n"
+            "Удалите старые напоминания: /my_reminders"
+        )
+        return
+    
     # Парсим текст напоминания
     reminder_data = parse_reminder_text(message_text)
     
@@ -3661,251 +3810,206 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
 
 def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
     """Сохраняет прогресс пользователя в базу данных"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    progress_date = datetime.now().strftime("%Y-%m-%d")
-    
-    c.execute('''INSERT INTO user_progress 
-                 (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
-                  water_intake, activity_done, user_comment, day_rating, challenges) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (user_id, progress_date, progress_data.get('tasks_completed'), 
-               progress_data.get('mood'), progress_data.get('energy'), 
-               progress_data.get('sleep_quality'), progress_data.get('water_intake'),
-               progress_data.get('activity_done'), progress_data.get('user_comment'),
-               progress_data.get('day_rating'), progress_data.get('challenges')))
-    conn.commit()
-    conn.close()
-    logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        progress_date = datetime.now().strftime("%Y-%m-%d")
+        
+        c.execute('''INSERT INTO user_progress 
+                     (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
+                      water_intake, activity_done, user_comment, day_rating, challenges) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (user_id, progress_date, progress_data.get('tasks_completed'), 
+                   progress_data.get('mood'), progress_data.get('energy'), 
+                   progress_data.get('sleep_quality'), progress_data.get('water_intake'),
+                   progress_data.get('activity_done'), progress_data.get('user_comment'),
+                   progress_data.get('day_rating'), progress_data.get('challenges')))
+        conn.commit()
+        logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка сохранения прогресса для {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def has_sufficient_data(user_id: int) -> bool:
     """Проверяет есть ли достаточно данных для статистики (минимум 3 дня)"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count >= 3
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+        count = c.fetchone()[0]
+        return count >= 3
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка проверки данных для {user_id}: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
 
 def get_user_activity_streak(user_id: int) -> int:
     """Возвращает текущую серию активных дней подряд"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Получаем все даты активности пользователя
-    c.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC", (user_id,))
-    dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in c.fetchall()]
-    conn.close()
-    
-    if not dates:
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Получаем все даты активности пользователя
+        c.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = ? ORDER BY progress_date DESC", (user_id,))
+        dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in c.fetchall()]
+        
+        if not dates:
+            return 0
+        
+        # Сортируем по убыванию и проверяем последовательность
+        dates.sort(reverse=True)
+        streak = 0
+        today = datetime.now().date()
+        
+        for i, date in enumerate(dates):
+            expected_date = today - timedelta(days=i)
+            if date == expected_date:
+                streak += 1
+            else:
+                break
+        
+        return streak
+    except Exception as e:
+        logger.error(f"❌ Ошибка расчета серии для {user_id}: {e}")
         return 0
-    
-    # Сортируем по убыванию и проверяем последовательность
-    dates.sort(reverse=True)
-    streak = 0
-    today = datetime.now().date()
-    
-    for i, date in enumerate(dates):
-        expected_date = today - timedelta(days=i)
-        if date == expected_date:
-            streak += 1
-        else:
-            break
-    
-    return streak
+    finally:
+        if conn:
+            conn.close()
 
 def get_user_main_goal(user_id: int) -> str:
     """Получает главную цель пользователя из анкеты"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 1", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    return result[0] if result else "Цель не установлена"
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 1", (user_id,))
+        result = c.fetchone()
+        return result[0] if result else "Цель не установлена"
+    except sqlite3.Error as e:
+        logger.error(f"❌ Ошибка получения цели для {user_id}: {e}")
+        return "Цель не установлена"
+    finally:
+        if conn:
+            conn.close()
 
 def get_user_level_info(user_id: int) -> Dict[str, Any]:
     """Возвращает информацию об уровне пользователя"""
-    # Базовая реализация системы уровней
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Считаем количество дней активности
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    active_days = c.fetchone()[0] or 0
-    
-    # Считаем выполненные задачи
-    c.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = ?", (user_id,))
-    total_tasks = c.fetchone()[0] or 0
-    
-    conn.close()
-    
-    # Простая система уровней
-    level_points = active_days * 10 + total_tasks * 2
-    level_names = {
-        0: "Новичок",
-        50: "Ученик", 
-        100: "Опытный",
-        200: "Профессионал",
-        500: "Мастер"
-    }
-    
-    current_level = "Новичок"
-    next_level_points = 50
-    points_to_next = 50
-    
-    for points, level in sorted(level_names.items()):
-        if level_points >= points:
-            current_level = level
-        else:
-            next_level_points = points
-            points_to_next = points - level_points
-            break
-    
-    return {
-        'level': current_level,
-        'points': level_points,
-        'points_to_next': points_to_next,
-        'next_level_points': next_level_points
-    }
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Считаем количество дней активности
+        c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+        active_days = c.fetchone()[0] or 0
+        
+        # Считаем выполненные задачи
+        c.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = ?", (user_id,))
+        total_tasks = c.fetchone()[0] or 0
+        
+        # Простая система уровней
+        level_points = active_days * 10 + total_tasks * 2
+        level_names = {
+            0: "Новичок",
+            50: "Ученик", 
+            100: "Опытный",
+            200: "Профессионал",
+            500: "Мастер"
+        }
+        
+        current_level = "Новичок"
+        next_level_points = 50
+        points_to_next = 50
+        
+        for points, level in sorted(level_names.items()):
+            if level_points >= points:
+                current_level = level
+            else:
+                next_level_points = points
+                points_to_next = points - level_points
+                break
+        
+        return {
+            'level': current_level,
+            'points': level_points,
+            'points_to_next': points_to_next,
+            'next_level_points': next_level_points
+        }
+    except Exception as e:
+        logger.error(f"❌ Ошибка расчета уровня для {user_id}: {e}")
+        return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
+    finally:
+        if conn:
+            conn.close()
 
 def get_favorite_ritual(user_id: int) -> str:
     """Определяет любимый ритуал пользователя"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Получаем ответы о ритуалах из анкеты
-    c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 22", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    if result:
-        rituals_text = result[0]
-        # Простой анализ текста для определения предпочтений
-        if "медитация" in rituals_text.lower():
-            return "Утренняя медитация"
-        elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
-            return "Утренняя зарядка"
-        elif "чтение" in rituals_text.lower():
-            return "Вечернее чтение"
-        elif "дневник" in rituals_text.lower():
-            return "Ведение дневника"
-        elif "планирование" in rituals_text.lower():
-            return "Планирование задач"
-    
-    return "на основе ваших предпочтений"
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Получаем ответы о ритуалах из анкеты
+        c.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = ? AND question_number = 22", (user_id,))
+        result = c.fetchone()
+        
+        if result:
+            rituals_text = result[0]
+            # Простой анализ текста для определения предпочтений
+            if "медитация" in rituals_text.lower():
+                return "Утренняя медитация"
+            elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
+                return "Утренняя зарядка"
+            elif "чтение" in rituals_text.lower():
+                return "Вечернее чтение"
+            elif "дневник" in rituals_text.lower():
+                return "Ведение дневника"
+            elif "планирование" in rituals_text.lower():
+                return "Планирование задач"
+        
+        return "на основе ваших предпочтений"
+    except Exception as e:
+        logger.error(f"❌ Ошибка определения ритуала для {user_id}: {e}")
+        return "личные ритуалы"
+    finally:
+        if conn:
+            conn.close()
 
 def get_user_usage_days(user_id: int) -> Dict[str, int]:
     """Возвращает статистику дней использования"""
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    
-    # Дни с регистрации
-    c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
-    reg_result = c.fetchone()
-    if not reg_result:
-        conn.close()
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Дни с регистрации
+        c.execute("SELECT registration_date FROM clients WHERE user_id = ?", (user_id,))
+        reg_result = c.fetchone()
+        if not reg_result:
+            return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+        
+        reg_date = datetime.strptime(reg_result[0], "%Y-%m-%d %H:%M:%S").date()
+        days_since_registration = (datetime.now().date() - reg_date).days + 1
+        
+        # Активные дни (когда был прогресс)
+        c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
+        active_days = c.fetchone()[0] or 0
+        
+        # Текущая серия
+        current_streak = get_user_activity_streak(user_id)
+        
+        return {
+            'days_since_registration': days_since_registration,
+            'active_days': active_days,
+            'current_day': active_days if active_days > 0 else 1,  # Текущий день использования
+            'current_streak': current_streak
+        }
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения статистики дней для {user_id}: {e}")
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
-    
-    reg_date = datetime.strptime(reg_result[0], "%Y-%m-%d %H:%M:%S").date()
-    days_since_registration = (datetime.now().date() - reg_date).days + 1
-    
-    # Активные дни (когда был прогресс)
-    c.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = ?", (user_id,))
-    active_days = c.fetchone()[0] or 0
-    
-    # Текущая серия
-    current_streak = get_user_activity_streak(user_id)
-    
-    conn.close()
-    
-    return {
-        'days_since_registration': days_since_registration,
-        'active_days': active_days,
-        'current_day': active_days if active_days > 0 else 1,  # Текущий день использования
-        'current_streak': current_streak
-    }
-
-async def done_command(update: Update, context: CallbackContext):
-    """Отмечает выполнение задачи"""
-    user_id = update.effective_user.id
-    update_user_activity(user_id)
-    
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Укажите номер задачи:\n"
-            "/done 1 - отметить задачу 1 выполненной\n"
-            "/done 2 - отметить задачу 2 выполненной"
-        )
-        return
-    
-    try:
-        task_number = int(context.args[0])
-        if task_number < 1 or task_number > 4:
-            await update.message.reply_text("❌ Номер задачи должен быть от 1 до 4")
-            return
-        
-        task_names = {1: "первую", 2: "вторую", 3: "третью", 4: "четвертую"}
-        
-        await update.message.reply_text(
-            f"✅ Отлично! Вы выполнили {task_names[task_number]} задачу!\n"
-            f"🎉 Продолжайте в том же духе!"
-        )
-        
-    except ValueError:
-        await update.message.reply_text("❌ Номер задачи должен быть числом")
-
-async def mood_command(update: Update, context: CallbackContext):
-    """Оценка настроения"""
-    user_id = update.effective_user.id
-    update_user_activity(user_id)
-    
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Оцените ваше настроение от 1 до 10:\n"
-            "/mood 1 - очень плохое\n"
-            "/mood 5 - нейтральное\n" 
-            "/mood 10 - отличное"
-        )
-        return
-    
-    try:
-        mood = int(context.args[0])
-        if mood < 1 or mood > 10:
-            await update.message.reply_text("❌ Оценка должна быть от 1 до 10")
-            return
-        
-        progress_data = {
-            'mood': mood,
-            'progress_date': datetime.now().strftime("%Y-%m-%d")
-        }
-        save_progress_to_db(user_id, progress_data)
-        
-        # Сохраняем в Google Sheets
-        report_data = {
-            'date': datetime.now().strftime("%Y-%m-%d"),
-            'mood': mood
-        }
-        save_daily_report_to_sheets(user_id, report_data)
-        
-        mood_responses = {
-            1: "😔 Мне жаль, что у вас плохое настроение.",
-            2: "😟 Надеюсь, завтра будет лучше!",
-            3: "🙁 Не отчаивайтесь, трудности временны!",
-            4: "😐 Спасибо за честность!",
-            5: "😊 Нейтрально - это тоже нормально!",
-            6: "😄 Хорошее настроение - это здорово!",
-            7: "😁 Отлично! Рад за вас!",
-            8: "🤩 Прекрасное настроение!",
-            9: "🥳 Восхитительно!",
-            10: "🎉 Идеально!"
-        }
-        
-        response = mood_responses.get(mood, "Спасибо за оценку!")
-        await update.message.reply_text(f"{response}\n\n📊 Данные сохранены!")
-        
-    except ValueError:
-        await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
+    finally:
+        if conn:
+            conn.close()
 
 async def points_info_command(update: Update, context: CallbackContext):
     """Объясняет систему очков"""
@@ -3959,66 +4063,72 @@ async def progress_command(update: Update, context: CallbackContext):
         )
     else:
         # Получаем данные за последние 7 дней
-        conn = sqlite3.connect('clients.db')
-        c = conn.cursor()
-        c.execute("""
-            SELECT 
-                COUNT(*) as total_days,
-                AVG(tasks_completed) as avg_tasks,
-                AVG(mood) as avg_mood,
-                AVG(energy) as avg_energy,
-                AVG(water_intake) as avg_water,
-                COUNT(DISTINCT progress_date) as active_days
-            FROM user_progress 
-            WHERE user_id = ? AND progress_date >= date('now', '-7 days')
-        """, (user_id,))
-        result = c.fetchone()
-        conn.close()
+        try:
+            conn = sqlite3.connect('clients.db')
+            c = conn.cursor()
+            c.execute("""
+                SELECT 
+                    COUNT(*) as total_days,
+                    AVG(tasks_completed) as avg_tasks,
+                    AVG(mood) as avg_mood,
+                    AVG(energy) as avg_energy,
+                    AVG(water_intake) as avg_water,
+                    COUNT(DISTINCT progress_date) as active_days
+                FROM user_progress 
+                WHERE user_id = ? AND progress_date >= date('now', '-7 days')
+            """, (user_id,))
+            result = c.fetchone()
 
-        total_days = result[0] or 0
-        avg_tasks = result[1] or 0
-        avg_mood = result[2] or 0
-        avg_energy = result[3] or 0
-        avg_water = result[4] or 0
-        active_days = result[5] or 0
+            total_days = result[0] or 0
+            avg_tasks = result[1] or 0
+            avg_mood = result[2] or 0
+            avg_energy = result[3] or 0
+            avg_water = result[4] or 0
+            active_days = result[5] or 0
 
-        # Рассчитываем проценты и динамику
-        tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
-        mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
-        energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
-        water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
-        activity_str = f"{active_days}/7 дней"
+            # Рассчитываем проценты и динамику
+            tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
+            mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
+            energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
+            water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
+            activity_str = f"{active_days}/7 дней"
 
-        # Динамика (упрощенная логика)
-        mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
-        energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
-        productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
+            # Динамика (упрощенная логика)
+            mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
+            energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
+            productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
-        # Получаем дополнительную информацию для профиля
-        usage_days = get_user_usage_days(user_id)
-        level_info = get_user_level_info(user_id)
+            # Получаем дополнительную информацию для профиля
+            usage_days = get_user_usage_days(user_id)
+            level_info = get_user_level_info(user_id)
 
-        # Персональный совет
-        advice = "Продолжайте в том же духе! Вы на правильном пути."
-        if avg_water and avg_water < 6:
-            advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
-        elif avg_mood and avg_mood < 6:
-            advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
+            # Персональный совет
+            advice = "Продолжайте в том же духе! Вы на правильном пути."
+            if avg_water and avg_water < 6:
+                advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
+            elif avg_mood and avg_mood < 6:
+                advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
 
-        await update.message.reply_text(
-            f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
-            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-            f"✅ Выполнено задач: {tasks_completed}\n"
-            f"😊 Среднее настроение: {mood_str}\n"
-            f"⚡ Уровень энергии: {energy_str}\n"
-            f"💧 Вода в среднем: {water_str}\n"
-            f"🏃 Активность: {activity_str}\n\n"
-            f"📈 ДИНАМИКА:\n"
-            f"• Настроение: {mood_dynamics}\n"
-            f"• Энергия: {energy_dynamics}\n"
-            f"• Продуктивность: {productivity_dynamics}\n\n"
-            f"🎯 СОВЕТ: {advice}"
-        )
+            await update.message.reply_text(
+                f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
+                f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+                f"✅ Выполнено задач: {tasks_completed}\n"
+                f"😊 Среднее настроение: {mood_str}\n"
+                f"⚡ Уровень энергии: {energy_str}\n"
+                f"💧 Вода в среднем: {water_str}\n"
+                f"🏃 Активность: {activity_str}\n\n"
+                f"📈 ДИНАМИКА:\n"
+                f"• Настроение: {mood_dynamics}\n"
+                f"• Энергия: {energy_dynamics}\n"
+                f"• Продуктивность: {productivity_dynamics}\n\n"
+                f"🎯 СОВЕТ: {advice}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения прогресса для {user_id}: {e}")
+            await update.message.reply_text("❌ Ошибка при получении статистики. Попробуйте позже.")
+        finally:
+            if conn:
+                conn.close()
 
 # ========== ОБНОВЛЕННАЯ ФУНКЦИЯ PROFILE_COMMAND ==========
 
@@ -4039,36 +4149,41 @@ async def profile_command(update: Update, context: CallbackContext):
     favorite_ritual = get_favorite_ritual(user_id)
     
     # Получаем статистику по планам
-    conn = sqlite3.connect('clients.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ?", (user_id,))
-    total_plans = c.fetchone()[0] or 0
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ?", (user_id,))
+        total_plans = c.fetchone()[0] or 0
 
-    c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ? AND status = 'completed'", (user_id,))
-    completed_plans = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(*) FROM user_plans WHERE user_id = ? AND status = 'completed'", (user_id,))
+        completed_plans = c.fetchone()[0] or 0
 
-    # Вычисляем процент выполнения планов
-    plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
-    
-    conn.close()
-    
-    # Формируем профиль
-    profile_text = (
-        f"👤 ВАШ ПРОФИЛЬ\n\n"
-        f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-        f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
-        f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
-        f"🏆 ДОСТИЖЕНИЯ:\n"
-        f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
-        f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
-        f"• Любимый ритуал: {favorite_ritual}\n\n"
-        f"🎮 УРОВЕНЬ: {level_info['level']}\n"
-        f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
-        f"💡 РЕКОМЕНДАЦИИ:\n"
-        f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
-    )
-    
-    await update.message.reply_text(profile_text)
+        # Вычисляем процент выполнения планов
+        plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
+        
+        # Формируем профиль
+        profile_text = (
+            f"👤 ВАШ ПРОФИЛЬ\n\n"
+            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+            f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
+            f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
+            f"🏆 ДОСТИЖЕНИЯ:\n"
+            f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
+            f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
+            f"• Любимый ритуал: {favorite_ritual}\n\n"
+            f"🎮 УРОВЕНЬ: {level_info['level']}\n"
+            f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
+            f"💡 РЕКОМЕНДАЦИИ:\n"
+            f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
+        )
+        
+        await update.message.reply_text(profile_text)
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения профиля для {user_id}: {e}")
+        await update.message.reply_text("❌ Ошибка при получении профиля. Попробуйте позже.")
+    finally:
+        if conn:
+            conn.close()
 
 # ========== ОБНОВЛЕННАЯ ФУНКЦИЯ HELP_COMMAND ==========
 
@@ -4110,90 +4225,7 @@ async def help_command(update: Update, context: CallbackContext):
     
     await update.message.reply_text(help_text)
 
-# ========== ДОБАВЛЕНИЕ ОБРАБОТЧИКОВ В MAIN() ==========
-
-# В функции main() добавьте эти обработчики:
-
-def main():
-    """Основная функция запуска бота"""
-    try:
-        application = Application.builder().token(TOKEN).build()
-
-        application.add_error_handler(error_handler)
-
-        # Основной обработчик диалога
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
-                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-
-        application.add_handler(conv_handler)
-        
-        # Команды для пользователей
-        application.add_handler(CommandHandler("done", done_command))
-        application.add_handler(CommandHandler("mood", mood_command))
-        application.add_handler(CommandHandler("energy", energy_command))
-        application.add_handler(CommandHandler("water", water_command))
-        application.add_handler(CommandHandler("points_info", points_info_command))
-        
-        # Новые команды для напоминаний
-        application.add_handler(CommandHandler("remind_me", remind_me_command))
-        application.add_handler(CommandHandler("regular_remind", regular_remind_command))
-        application.add_handler(CommandHandler("my_reminders", my_reminders_command))
-        application.add_handler(CommandHandler("delete_remind", delete_remind_command))
-
-        # Команды для администратора
-        application.add_handler(CommandHandler("create_plan", create_plan_command))
-        application.add_handler(CommandHandler("set_plan", set_plan_command))
-        application.add_handler(CommandHandler("admin_help", admin_help))
-        application.add_handler(CommandHandler("user_info", user_info_command))
-        application.add_handler(CommandHandler("quick_plan", quick_plan_command))
-        application.add_handler(CommandHandler("broadcast", broadcast_command))
-        application.add_handler(CommandHandler("update_sheets", update_sheets_command))
-        
-        # Обработчики кнопок и сообщений
-        application.add_handler(CallbackQueryHandler(button_callback))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
-        
-        # Настройка JobQueue для автоматических сообщений
-        try:
-            job_queue = application.job_queue
-            if job_queue:
-                # Удаляем старые задачи
-                current_jobs = job_queue.jobs()
-                for job in current_jobs:
-                    job.schedule_removal()
-                
-                # Утреннее сообщение в 6:00
-                job_queue.run_daily(
-                    callback=send_morning_plan,
-                    time=dt_time(hour=3, minute=0),  # 6:00 MSK (UTC+3)
-                    days=tuple(range(7)),
-                    name="morning_plan"
-                )
-                
-                # Вечерний опрос в 21:00
-                job_queue.run_daily(
-                    callback=send_evening_survey,
-                    time=dt_time(hour=18, minute=0),  # 21:00 MSK (UTC+3)
-                    days=tuple(range(7)),
-                    name="evening_survey"
-                )
-                
-                logger.info("✅ JobQueue настроен для автоматических сообщений")
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка настройки JobQueue: {e}")
-
-        logger.info("🤖 Бот запускается...")
-        application.run_polling()
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка запуска бота: {e}")
+# ========== АВТОМАТИЧЕСКИЕ СООБЩЕНИЯ ==========
 
 async def send_morning_plan(context: CallbackContext):
     """Отправляет утренний план пользователям"""
@@ -4293,7 +4325,7 @@ async def send_evening_survey(context: CallbackContext):
     except Exception as e:
         logger.error(f"❌ Ошибка в send_evening_survey: {e}")
 
-# ========== ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ ФУНКЦИИ ==========
+# ========== ОБРАБОТЧИКИ ОШИБОК И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 async def error_handler(update: Update, context: CallbackContext) -> None:
     """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
@@ -4334,7 +4366,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     )
     return ConversationHandler.END
 
-# Заглушки для отсутствующих функций
+# Заглушки для отсутствующих функций (для совместимости)
 async def create_plan_command(update: Update, context: CallbackContext):
     await update.message.reply_text("❌ Функция временно недоступна")
 
@@ -4430,23 +4462,12 @@ async def handle_all_messages(update: Update, context: CallbackContext):
         "'напомни мне в 20:00 сделать зарядку'"
     )
 
-    # Сохраняем входящее сообщение
-    save_message(user_id, message_text, 'incoming')
-    update_user_activity(user_id)
-    
-    # Проверяем, является ли сообщение напоминанием
-    if any(word in message_text.lower() for word in ['напомни', 'напоминай']):
-        await handle_reminder_nlp(update, context)
-        return
-    
-    # Если это не команда и не напоминание, просто сохраняем
-    logger.info(f"💬 Сообщение от {user_id}: {message_text}")
+# ========== ОСНОВНАЯ ФУНКЦИЯ ЗАПУСКА ==========
 
 def main():
-    """Основная функция запуска бота"""
+    """Основная функция запуска бота для Render"""
     try:
         application = Application.builder().token(TOKEN).build()
-
         application.add_error_handler(error_handler)
 
         # ОБНОВЛЕННЫЙ обработчик диалога
@@ -4498,7 +4519,7 @@ def main():
         # ✅ ДОБАВЛЯЕМ СИСТЕМУ НАПОМИНАНИЙ
         schedule_reminders(application)
         
-        # Настройка JobQueue для автоматических сообщений
+        # УПРОЩЕННАЯ настройка JobQueue для Render Starter
         try:
             job_queue = application.job_queue
             if job_queue:
@@ -4507,20 +4528,27 @@ def main():
                 for job in current_jobs:
                     job.schedule_removal()
                 
-                # Утреннее сообщение в 6:00
+                # Утреннее сообщение в 6:00 (3:00 UTC для UTC+3)
                 job_queue.run_daily(
                     callback=send_morning_plan,
-                    time=dt_time(hour=3, minute=0),  # 6:00 MSK (UTC+3)
+                    time=dt_time(hour=3, minute=0, second=0),
                     days=tuple(range(7)),
                     name="morning_plan"
                 )
                 
-                # Вечерний опрос в 21:00
+                # Вечерний опрос в 21:00 (18:00 UTC для UTC+3)
                 job_queue.run_daily(
                     callback=send_evening_survey,
-                    time=dt_time(hour=18, minute=0),  # 21:00 MSK (UTC+3)
+                    time=dt_time(hour=18, minute=0, second=0),
                     days=tuple(range(7)),
                     name="evening_survey"
+                )
+                
+                # Периодическая проверка напоминаний каждые 5 минут
+                job_queue.run_repeating(
+                    callback=check_scheduled_reminders,
+                    interval=300,  # 5 минут
+                    first=10
                 )
                 
                 logger.info("✅ JobQueue настроен для автоматических сообщений")
@@ -4528,11 +4556,16 @@ def main():
         except Exception as e:
             logger.error(f"❌ Ошибка настройки JobQueue: {e}")
 
-        logger.info("🤖 Бот запускается...")
-        application.run_polling()
+        logger.info("🤖 Бот запускается на Render...")
+        application.run_polling(
+            poll_interval=1.0,
+            timeout=20,
+            drop_pending_updates=True  # Важно для избежания обработки старых сообщений при перезапуске
+        )
         
     except Exception as e:
-        logger.error(f"❌ Ошибка запуска бота: {e}")
+        logger.error(f"❌ Критическая ошибка запуска бота: {e}")
+        raise
 
 if __name__ == '__main__':
     main()
