@@ -2181,7 +2181,7 @@ class GoogleSheetsManager:
             logger.error(f"❌ Ошибка подключения к Google Sheets: {e}")
             return None
     
-    async def save_daily_data(self, user_id: int, data_type: str, value: str) -> bool:
+    def save_daily_data(self, user_id: int, data_type: str, value: str) -> bool:
         """Сохраняет ежедневные данные в новую структуру безопасно"""
         if not self.sheet:
             logger.warning("⚠️ Google Sheets не подключен")
@@ -2203,7 +2203,7 @@ class GoogleSheetsManager:
             
             if not row_index:
                 # Создаем новую запись
-                user_info = await self.get_user_info(user_id)
+                user_info = self.get_user_info(user_id)
                 if not user_info:
                     return False
                 
@@ -2246,150 +2246,162 @@ class GoogleSheetsManager:
             logger.error(f"❌ Ошибка сохранения данных в Google Sheets: {e}")
             return False
     
-    async def get_user_info(self, user_id: int) -> Optional[Dict[str, str]]:
+    def get_user_info(self, user_id: int) -> Optional[Dict[str, str]]:
         """Получает информацию о пользователе безопасно"""
+        conn = get_db_connection()
+        if not conn:
+            return None
+            
         try:
-            async with get_db_connection() as conn:
-                async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                    await cursor.execute(
-                        "SELECT username, first_name FROM clients WHERE user_id = %s", 
-                        (user_id,)
-                    )
-                    result = await cursor.fetchone()
-                    if result:
-                        return {
-                            'username': result['username'] or '', 
-                            'first_name': result['first_name'] or ''
-                        }
-                    return None
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT username, first_name FROM clients WHERE user_id = %s", 
+                (user_id,)
+            )
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'username': result['username'] or '', 
+                    'first_name': result['first_name'] or ''
+                }
+            return None
         except Exception as e:
             logger.error(f"❌ Ошибка получения информации о пользователе {user_id}: {e}")
             return None
+        finally:
+            if conn:
+                conn.close()
 
 sheets_manager = GoogleSheetsManager()
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
-async def get_db_connection():
-    """Создает соединение с PostgreSQL"""
-    return psycopg2.connect(DATABASE_URL)
-
-async def save_user_info(user_id: int, username: str, first_name: str, last_name: str):
-    """Сохраняет информацию о пользователе в PostgreSQL"""
-    try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute('''
-                    INSERT INTO clients (user_id, username, first_name, last_name, registration_date, last_activity, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id) 
-                    DO UPDATE SET 
-                        username = EXCLUDED.username,
-                        first_name = EXCLUDED.first_name,
-                        last_name = EXCLUDED.last_name,
-                        last_activity = EXCLUDED.last_activity
-                ''', (user_id, username, first_name, last_name, 
-                   datetime.now(), datetime.now(), 'active'))
-                await conn.commit()
-                logger.info(f"✅ Информация о пользователе {user_id} сохранена")
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
-
-async def update_user_activity(user_id: int):
+def update_user_activity(user_id: int):
     """Обновляет время последней активности пользователя"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "UPDATE clients SET last_activity = %s WHERE user_id = %s",
-                    (datetime.now(), user_id)
-                )
-                await conn.commit()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE clients SET last_activity = %s WHERE user_id = %s",
+            (datetime.now(), user_id)
+        )
+        conn.commit()
     except Exception as e:
         logger.error(f"❌ Ошибка обновления активности {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
-async def check_user_registered(user_id: int) -> bool:
+def check_user_registered(user_id: int) -> bool:
     """Проверяет, зарегистрирован ли пользователь"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM clients WHERE user_id = %s", 
-                    (user_id,)
-                )
-                result = await cursor.fetchone()
-                return result[0] > 0 if result else False
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM clients WHERE user_id = %s", 
+            (user_id,)
+        )
+        result = cursor.fetchone()
+        return result[0] > 0 if result else False
     except Exception as e:
         logger.error(f"❌ Ошибка проверки регистрации {user_id}: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
-async def save_questionnaire_answer(user_id: int, question_number: int, question: str, answer: str):
+def save_questionnaire_answer(user_id: int, question_number: int, question: str, answer: str):
     """Сохраняет ответ на вопрос анкеты"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute('''
-                    INSERT INTO questionnaire_answers (user_id, question_number, question_text, answer_text, created_at)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id, question_number) 
-                    DO UPDATE SET 
-                        answer_text = EXCLUDED.answer_text,
-                        created_at = EXCLUDED.created_at
-                ''', (user_id, question_number, question, answer, datetime.now()))
-                await conn.commit()
-                logger.info(f"✅ Ответ на вопрос {question_number} пользователя {user_id} сохранен")
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO questionnaire_answers (user_id, question_number, question_text, answer_text, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, question_number) 
+            DO UPDATE SET 
+                answer_text = EXCLUDED.answer_text,
+                created_at = EXCLUDED.created_at
+        ''', (user_id, question_number, question, answer, datetime.now()))
+        conn.commit()
+        logger.info(f"✅ Ответ на вопрос {question_number} пользователя {user_id} сохранен")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения ответа {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
-async def save_message(user_id: int, message_text: str, direction: str):
+def save_message(user_id: int, message_text: str, direction: str):
     """Сохраняет сообщение в базу"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "INSERT INTO messages (user_id, message_text, direction, created_at) VALUES (%s, %s, %s, %s)",
-                    (user_id, message_text, direction, datetime.now())
-                )
-                await conn.commit()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO messages (user_id, message_text, direction, created_at) VALUES (%s, %s, %s, %s)",
+            (user_id, message_text, direction, datetime.now())
+        )
+        conn.commit()
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения сообщения {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 # ========== ВОССТАНОВЛЕНИЕ АНКЕТЫ ==========
 
-async def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
+def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
     """Восстанавливает состояние анкеты пользователя из PostgreSQL"""
+    conn = get_db_connection()
+    if not conn:
+        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                # Получаем все ответы пользователя
-                await cursor.execute('''
-                    SELECT question_number, answer_text 
-                    FROM questionnaire_answers 
-                    WHERE user_id = %s 
-                    ORDER BY question_number
-                ''', (user_id,))
-                
-                answers_data = await cursor.fetchall()
-                answers = {}
-                for row in answers_data:
-                    answers[row['question_number']] = row['answer_text']
-                
-                if answers:
-                    # Определяем текущий вопрос
-                    last_question = max(answers.keys())
-                    current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
-                    
-                    return {
-                        'current_question': current_question,
-                        'answers': answers,
-                        'has_previous_answers': True
-                    }
-                
-                return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-                
+        cursor = conn.cursor()
+        
+        # Получаем все ответы пользователя
+        cursor.execute('''
+            SELECT question_number, answer_text 
+            FROM questionnaire_answers 
+            WHERE user_id = %s 
+            ORDER BY question_number
+        ''', (user_id,))
+        
+        answers_data = cursor.fetchall()
+        answers = {}
+        for row in answers_data:
+            answers[row['question_number']] = row['answer_text']
+        
+        if answers:
+            # Определяем текущий вопрос
+            last_question = max(answers.keys())
+            current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
+            
+            return {
+                'current_question': current_question,
+                'answers': answers,
+                'has_previous_answers': True
+            }
+        
+        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+        
     except Exception as e:
         logger.error(f"❌ Ошибка БД при восстановлении анкеты {user_id}: {e}")
         return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+    finally:
+        if conn:
+            conn.close()
 
 # ========== ОСНОВНЫЕ КОМАНДЫ БОТА ==========
 
@@ -2398,25 +2410,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_id = user.id
     
-    await save_user_info(user_id, user.username, user.first_name, user.last_name)
-    await update_user_activity(user_id)
+    save_user_info(user_id, user.username, user.first_name, user.last_name)
+    update_user_activity(user_id)
     
     # Восстанавливаем состояние анкеты
-    questionnaire_state = await restore_questionnaire_state(user_id)
+    questionnaire_state = restore_questionnaire_state(user_id)
     
     has_answers = False
-    try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = %s", 
-                    (user_id,)
-                )
-                result = await cursor.fetchone()
-                has_answers = result[0] > 0 if result else False
-    except Exception as e:
-        logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
-        has_answers = False
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = %s", 
+                (user_id,)
+            )
+            result = cursor.fetchone()
+            has_answers = result[0] > 0 if result else False
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
+            has_answers = False
+        finally:
+            conn.close()
     
     if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
         # Анкета уже полностью заполнена
@@ -2500,7 +2515,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Сохраняем ответ
     current_question = context.user_data['current_question']
-    await save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
+    save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
     # Переходим к следующему вопросу
@@ -2628,28 +2643,36 @@ async def add_plan_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.user_data['plan_user_id'] = user_id
         
         # Проверяем существование пользователя
+        conn = get_db_connection()
+        if not conn:
+            await update.message.reply_text(
+                f"❌ Ошибка подключения к базе данных. Попробуйте снова:"
+            )
+            return ADD_PLAN_USER
+            
         try:
-            async with get_db_connection() as conn:
-                async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                    await cursor.execute(
-                        "SELECT first_name FROM clients WHERE user_id = %s", 
-                        (user_id,)
-                    )
-                    user_info = await cursor.fetchone()
-                    if not user_info:
-                        await update.message.reply_text(
-                            f"❌ Пользователь с ID {user_id} не найден.\n"
-                            "Проверьте ID и попробуйте снова:"
-                        )
-                        return ADD_PLAN_USER
-                    
-                    context.user_data['user_name'] = user_info['first_name']
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT first_name FROM clients WHERE user_id = %s", 
+                (user_id,)
+            )
+            user_info = cursor.fetchone()
+            if not user_info:
+                await update.message.reply_text(
+                    f"❌ Пользователь с ID {user_id} не найден.\n"
+                    "Проверьте ID и попробуйте снова:"
+                )
+                return ADD_PLAN_USER
+            
+            context.user_data['user_name'] = user_info['first_name']
         except Exception as e:
             logger.error(f"❌ Ошибка проверки пользователя {user_id}: {e}")
             await update.message.reply_text(
                 f"❌ Ошибка при проверке пользователя. Попробуйте снова:"
             )
             return ADD_PLAN_USER
+        finally:
+            conn.close()
         
         await update.message.reply_text(
             f"👤 Пользователь: {user_info['first_name']} (ID: {user_id})\n\n"
@@ -2709,7 +2732,7 @@ async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     if success:
         # Сохраняем в PostgreSQL
-        await save_user_plan_to_db(user_id, {
+        save_user_plan_to_db(user_id, {
             'plan_date': date_str,
             'task1': plan_data.get('strategic_tasks', [''])[0] if plan_data.get('strategic_tasks') else '',
             'task2': plan_data.get('strategic_tasks', [''])[1] if len(plan_data.get('strategic_tasks', [])) > 1 else '',
@@ -2743,91 +2766,115 @@ async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     return ConversationHandler.END
 
-async def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
+def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
     """Сохраняет план пользователя в PostgreSQL"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute('''
-                    INSERT INTO user_plans (user_id, plan_date, task1, task2, task3, task4, advice, status, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (user_id, plan_data['plan_date'], plan_data['task1'], plan_data['task2'],
-                   plan_data['task3'], plan_data['task4'], plan_data['advice'], 'active', datetime.now()))
-                await conn.commit()
-                logger.info(f"✅ План пользователя {user_id} сохранен в БД")
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO user_plans (user_id, plan_date, task1, task2, task3, task4, advice, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (user_id, plan_data['plan_date'], plan_data['task1'], plan_data['task2'],
+           plan_data['task3'], plan_data['task4'], plan_data['advice'], 'active', datetime.now()))
+        conn.commit()
+        logger.info(f"✅ План пользователя {user_id} сохранен в БД")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения плана {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 # ========== СИСТЕМА НАПОМИНАНИЙ ==========
 
-async def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
+def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
     """Добавляет напоминание в базу данных"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute('''
-                    INSERT INTO user_reminders 
-                    (user_id, reminder_text, reminder_time, days_of_week, reminder_type, is_active, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ''', (user_id, reminder_data['text'], reminder_data['time'], 
-                   ','.join(reminder_data.get('days', [])), reminder_data['type'], True, datetime.now()))
-                await conn.commit()
-                logger.info(f"✅ Напоминание добавлено для пользователя {user_id}")
-                return True
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO user_reminders 
+            (user_id, reminder_text, reminder_time, days_of_week, reminder_type, is_active, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (user_id, reminder_data['text'], reminder_data['time'], 
+           ','.join(reminder_data.get('days', [])), reminder_data['type'], True, datetime.now()))
+        conn.commit()
+        logger.info(f"✅ Напоминание добавлено для пользователя {user_id}")
+        return True
     except Exception as e:
         logger.error(f"❌ Ошибка добавления напоминания {user_id}: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
-async def get_user_reminders(user_id: int) -> List[Dict]:
+def get_user_reminders(user_id: int) -> List[Dict]:
     """Возвращает список напоминаний пользователя"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                await cursor.execute('''
-                    SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
-                    FROM user_reminders 
-                    WHERE user_id = %s AND is_active = true 
-                    ORDER BY created_at DESC
-                ''', (user_id,))
-                
-                reminders_data = await cursor.fetchall()
-                reminders = []
-                for row in reminders_data:
-                    reminders.append({
-                        'id': row['id'],
-                        'text': row['reminder_text'],
-                        'time': row['reminder_time'],
-                        'days': row['days_of_week'],
-                        'type': row['reminder_type']
-                    })
-                
-                return reminders
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
+            FROM user_reminders 
+            WHERE user_id = %s AND is_active = true 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        
+        reminders_data = cursor.fetchall()
+        reminders = []
+        for row in reminders_data:
+            reminders.append({
+                'id': row['id'],
+                'text': row['reminder_text'],
+                'time': row['reminder_time'],
+                'days': row['days_of_week'],
+                'type': row['reminder_type']
+            })
+        
+        return reminders
     except Exception as e:
         logger.error(f"❌ Ошибка БД при получении напоминаний {user_id}: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
-async def delete_reminder_from_db(reminder_id: int) -> bool:
+def delete_reminder_from_db(reminder_id: int) -> bool:
     """Удаляет напоминание по ID"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    'UPDATE user_reminders SET is_active = false WHERE id = %s', 
-                    (reminder_id,)
-                )
-                await conn.commit()
-                logger.info(f"✅ Напоминание {reminder_id} удалено")
-                return True
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE user_reminders SET is_active = false WHERE id = %s', 
+            (reminder_id,)
+        )
+        conn.commit()
+        logger.info(f"✅ Напоминание {reminder_id} удалено")
+        return True
     except Exception as e:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 # ========== КОМАНДЫ ТРЕКИНГА ==========
 
 async def done_command(update: Update, context: CallbackContext):
     """Отмечает выполнение задачи"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -2856,7 +2903,7 @@ async def done_command(update: Update, context: CallbackContext):
 async def mood_command(update: Update, context: CallbackContext):
     """Оценка настроения"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -2877,7 +2924,7 @@ async def mood_command(update: Update, context: CallbackContext):
             'mood': mood,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        await save_progress_to_db(user_id, progress_data)
+        save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
@@ -2908,7 +2955,7 @@ async def mood_command(update: Update, context: CallbackContext):
 async def energy_command(update: Update, context: CallbackContext):
     """Оценка уровня энергии"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -2929,7 +2976,7 @@ async def energy_command(update: Update, context: CallbackContext):
             'energy': energy,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        await save_progress_to_db(user_id, progress_data)
+        save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
@@ -2960,7 +3007,7 @@ async def energy_command(update: Update, context: CallbackContext):
 async def water_command(update: Update, context: CallbackContext):
     """Отслеживание водного баланса"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -2979,7 +3026,7 @@ async def water_command(update: Update, context: CallbackContext):
             'water_intake': water,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        await save_progress_to_db(user_id, progress_data)
+        save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
@@ -3007,222 +3054,264 @@ async def water_command(update: Update, context: CallbackContext):
 
 # ========== СИСТЕМА ПРОГРЕССА И СТАТИСТИКИ ==========
 
-async def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
+def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
     """Сохраняет прогресс пользователя в базу данных"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                progress_date = datetime.now().strftime("%Y-%m-%d")
-                
-                await cursor.execute('''
-                    INSERT INTO user_progress 
-                    (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
-                     water_intake, activity_done, user_comment, day_rating, challenges) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (user_id, progress_date, progress_data.get('tasks_completed'), 
-                   progress_data.get('mood'), progress_data.get('energy'), 
-                   progress_data.get('sleep_quality'), progress_data.get('water_intake'),
-                   progress_data.get('activity_done'), progress_data.get('user_comment'),
-                   progress_data.get('day_rating'), progress_data.get('challenges')))
-                await conn.commit()
-                logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
+        cursor = conn.cursor()
+        progress_date = datetime.now().strftime("%Y-%m-%d")
+        
+        cursor.execute('''
+            INSERT INTO user_progress 
+            (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
+             water_intake, activity_done, user_comment, day_rating, challenges) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (user_id, progress_date, progress_data.get('tasks_completed'), 
+           progress_data.get('mood'), progress_data.get('energy'), 
+           progress_data.get('sleep_quality'), progress_data.get('water_intake'),
+           progress_data.get('activity_done'), progress_data.get('user_comment'),
+           progress_data.get('day_rating'), progress_data.get('challenges')))
+        conn.commit()
+        logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения прогресса для {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
-async def has_sufficient_data(user_id: int) -> bool:
+def has_sufficient_data(user_id: int) -> bool:
     """Проверяет есть ли достаточно данных для статистики (минимум 3 дня)"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
-                    (user_id,)
-                )
-                result = await cursor.fetchone()
-                count = result[0] if result else 0
-                return count >= 3
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
+            (user_id,)
+        )
+        result = cursor.fetchone()
+        count = result[0] if result else 0
+        return count >= 3
     except Exception as e:
         logger.error(f"❌ Ошибка проверки данных для {user_id}: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
-async def get_user_activity_streak(user_id: int) -> int:
+def get_user_activity_streak(user_id: int) -> int:
     """Возвращает текущую серию активных дней подряд"""
+    conn = get_db_connection()
+    if not conn:
+        return 0
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                # Получаем все даты активности пользователя
-                await cursor.execute(
-                    "SELECT DISTINCT progress_date FROM user_progress WHERE user_id = %s ORDER BY progress_date DESC", 
-                    (user_id,)
-                )
-                dates_data = await cursor.fetchall()
-                dates = [row[0] for row in dates_data]
-                
-                if not dates:
-                    return 0
-                
-                # Сортируем по убыванию и проверяем последовательность
-                dates.sort(reverse=True)
-                streak = 0
-                today = datetime.now().date()
-                
-                for i, date in enumerate(dates):
-                    expected_date = today - timedelta(days=i)
-                    if date == expected_date:
-                        streak += 1
-                    else:
-                        break
-                
-                return streak
+        cursor = conn.cursor()
+        # Получаем все даты активности пользователя
+        cursor.execute(
+            "SELECT DISTINCT progress_date FROM user_progress WHERE user_id = %s ORDER BY progress_date DESC", 
+            (user_id,)
+        )
+        dates_data = cursor.fetchall()
+        dates = [row[0] for row in dates_data]
+        
+        if not dates:
+            return 0
+        
+        # Сортируем по убыванию и проверяем последовательность
+        dates.sort(reverse=True)
+        streak = 0
+        today = datetime.now().date()
+        
+        for i, date in enumerate(dates):
+            expected_date = today - timedelta(days=i)
+            if date == expected_date:
+                streak += 1
+            else:
+                break
+        
+        return streak
     except Exception as e:
         logger.error(f"❌ Ошибка расчета серии для {user_id}: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
 
-async def get_user_main_goal(user_id: int) -> str:
+def get_user_main_goal(user_id: int) -> str:
     """Получает главную цель пользователя из анкеты"""
+    conn = get_db_connection()
+    if not conn:
+        return "Цель не установлена"
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                await cursor.execute(
-                    "SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 1", 
-                    (user_id,)
-                )
-                result = await cursor.fetchone()
-                return result['answer_text'] if result else "Цель не установлена"
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 1", 
+            (user_id,)
+        )
+        result = cursor.fetchone()
+        return result['answer_text'] if result else "Цель не установлена"
     except Exception as e:
         logger.error(f"❌ Ошибка получения цели для {user_id}: {e}")
         return "Цель не установлена"
+    finally:
+        if conn:
+            conn.close()
 
-async def get_favorite_ritual(user_id: int) -> str:
+def get_favorite_ritual(user_id: int) -> str:
     """Определяет любимый ритуал пользователя"""
+    conn = get_db_connection()
+    if not conn:
+        return "личные ритуалы"
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                # Получаем ответы о ритуалах из анкеты
-                await cursor.execute(
-                    "SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 22", 
-                    (user_id,)
-                )
-                result = await cursor.fetchone()
-                
-                if result:
-                    rituals_text = result['answer_text']
-                    # Простой анализ текста для определения предпочтений
-                    if "медитация" in rituals_text.lower():
-                        return "Утренняя медитация"
-                    elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
-                        return "Утренняя зарядка"
-                    elif "чтение" in rituals_text.lower():
-                        return "Вечернее чтение"
-                    elif "дневник" in rituals_text.lower():
-                        return "Ведение дневника"
-                    elif "планирование" in rituals_text.lower():
-                        return "Планирование задач"
-                
-                return "на основе ваших предпочтений"
+        cursor = conn.cursor()
+        # Получаем ответы о ритуалах из анкеты
+        cursor.execute(
+            "SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 22", 
+            (user_id,)
+        )
+        result = cursor.fetchone()
+        
+        if result:
+            rituals_text = result['answer_text']
+            # Простой анализ текста для определения предпочтений
+            if "медитация" in rituals_text.lower():
+                return "Утренняя медитация"
+            elif "зарядка" in rituals_text.lower() or "растяжка" in rituals_text.lower():
+                return "Утренняя зарядка"
+            elif "чтение" in rituals_text.lower():
+                return "Вечернее чтение"
+            elif "дневник" in rituals_text.lower():
+                return "Ведение дневника"
+            elif "планирование" in rituals_text.lower():
+                return "Планирование задач"
+        
+        return "на основе ваших предпочтений"
     except Exception as e:
         logger.error(f"❌ Ошибка определения ритуала для {user_id}: {e}")
         return "личные ритуалы"
+    finally:
+        if conn:
+            conn.close()
 
-async def get_user_level_info(user_id: int) -> Dict[str, Any]:
+def get_user_level_info(user_id: int) -> Dict[str, Any]:
     """Возвращает информацию об уровне пользователя"""
+    conn = get_db_connection()
+    if not conn:
+        return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                # Считаем количество дней активности
-                await cursor.execute(
-                    "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
-                    (user_id,)
-                )
-                active_days_result = await cursor.fetchone()
-                active_days = active_days_result[0] if active_days_result else 0
-                
-                # Считаем выполненные задачи
-                await cursor.execute(
-                    "SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = %s", 
-                    (user_id,)
-                )
-                total_tasks_result = await cursor.fetchone()
-                total_tasks = total_tasks_result[0] if total_tasks_result else 0
-                
-                # Простая система уровней
-                level_points = active_days * 10 + total_tasks * 2
-                level_names = {
-                    0: "Новичок",
-                    50: "Ученик", 
-                    100: "Опытный",
-                    200: "Профессионал",
-                    500: "Мастер"
-                }
-                
-                current_level = "Новичок"
-                next_level_points = 50
-                points_to_next = 50
-                
-                for points, level in sorted(level_names.items()):
-                    if level_points >= points:
-                        current_level = level
-                    else:
-                        next_level_points = points
-                        points_to_next = points - level_points
-                        break
-                
-                return {
-                    'level': current_level,
-                    'points': level_points,
-                    'points_to_next': points_to_next,
-                    'next_level_points': next_level_points
-                }
+        cursor = conn.cursor()
+        # Считаем количество дней активности
+        cursor.execute(
+            "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
+            (user_id,)
+        )
+        active_days_result = cursor.fetchone()
+        active_days = active_days_result[0] if active_days_result else 0
+        
+        # Считаем выполненные задачи
+        cursor.execute(
+            "SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = %s", 
+            (user_id,)
+        )
+        total_tasks_result = cursor.fetchone()
+        total_tasks = total_tasks_result[0] if total_tasks_result else 0
+        
+        # Простая система уровней
+        level_points = active_days * 10 + total_tasks * 2
+        level_names = {
+            0: "Новичок",
+            50: "Ученик", 
+            100: "Опытный",
+            200: "Профессионал",
+            500: "Мастер"
+        }
+        
+        current_level = "Новичок"
+        next_level_points = 50
+        points_to_next = 50
+        
+        for points, level in sorted(level_names.items()):
+            if level_points >= points:
+                current_level = level
+            else:
+                next_level_points = points
+                points_to_next = points - level_points
+                break
+        
+        return {
+            'level': current_level,
+            'points': level_points,
+            'points_to_next': points_to_next,
+            'next_level_points': next_level_points
+        }
     except Exception as e:
         logger.error(f"❌ Ошибка расчета уровня для {user_id}: {e}")
         return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
+    finally:
+        if conn:
+            conn.close()
 
-async def get_user_usage_days(user_id: int) -> Dict[str, int]:
+def get_user_usage_days(user_id: int) -> Dict[str, int]:
     """Возвращает статистику дней использования"""
+    conn = get_db_connection()
+    if not conn:
+        return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                # Дни с регистрации
-                await cursor.execute(
-                    "SELECT registration_date FROM clients WHERE user_id = %s", 
-                    (user_id,)
-                )
-                reg_result = await cursor.fetchone()
-                if not reg_result:
-                    return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
-                
-                reg_date = reg_result['registration_date']
-                days_since_registration = (datetime.now().date() - reg_date.date()).days + 1
-                
-                # Активные дни (когда был прогресс)
-                await cursor.execute(
-                    "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
-                    (user_id,)
-                )
-                active_days_result = await cursor.fetchone()
-                active_days = active_days_result[0] if active_days_result else 0
-                
-                # Текущая серия
-                current_streak = await get_user_activity_streak(user_id)
-                
-                return {
-                    'days_since_registration': days_since_registration,
-                    'active_days': active_days,
-                    'current_day': active_days if active_days > 0 else 1,
-                    'current_streak': current_streak
-                }
+        cursor = conn.cursor()
+        # Дни с регистрации
+        cursor.execute(
+            "SELECT registration_date FROM clients WHERE user_id = %s", 
+            (user_id,)
+        )
+        reg_result = cursor.fetchone()
+        if not reg_result:
+            return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+        
+        reg_date = reg_result['registration_date']
+        days_since_registration = (datetime.now().date() - reg_date.date()).days + 1
+        
+        # Активные дни (когда был прогресс)
+        cursor.execute(
+            "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", 
+            (user_id,)
+        )
+        active_days_result = cursor.fetchone()
+        active_days = active_days_result[0] if active_days_result else 0
+        
+        # Текущая серия
+        current_streak = get_user_activity_streak(user_id)
+        
+        return {
+            'days_since_registration': days_since_registration,
+            'active_days': active_days,
+            'current_day': active_days if active_days > 0 else 1,
+            'current_streak': current_streak
+        }
     except Exception as e:
         logger.error(f"❌ Ошибка получения статистики дней для {user_id}: {e}")
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
+    finally:
+        if conn:
+            conn.close()
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ПОЛЬЗОВАТЕЛЯ ==========
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
-    if not await check_user_registered(user_id):
+    if not check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
@@ -3274,15 +3363,15 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает персонализированный прогресс"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
-    if not await check_user_registered(user_id):
+    if not check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    if not await has_sufficient_data(user_id):
+    if not has_sufficient_data(user_id):
         # Показываем сообщение о недостатке данных
-        usage_days = await get_user_usage_days(user_id)
+        usage_days = get_user_usage_days(user_id)
         
         await update.message.reply_text(
             f"📊 ВАШ ПРОГРЕСС ФОРМИРУЕТСЯ!\n\n"
@@ -3299,129 +3388,141 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         # Получаем данные за последние 7 дней
+        conn = get_db_connection()
+        if not conn:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных")
+            return
+            
         try:
-            async with get_db_connection() as conn:
-                async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                    await cursor.execute("""
-                        SELECT 
-                            COUNT(*) as total_days,
-                            AVG(tasks_completed) as avg_tasks,
-                            AVG(mood) as avg_mood,
-                            AVG(energy) as avg_energy,
-                            AVG(water_intake) as avg_water,
-                            COUNT(DISTINCT progress_date) as active_days
-                        FROM user_progress 
-                        WHERE user_id = %s AND progress_date >= CURRENT_DATE - INTERVAL '7 days'
-                    """, (user_id,))
-                    
-                    result = await cursor.fetchone()
-                    
-                    total_days = result['total_days'] or 0
-                    avg_tasks = result['avg_tasks'] or 0
-                    avg_mood = result['avg_mood'] or 0
-                    avg_energy = result['avg_energy'] or 0
-                    avg_water = result['avg_water'] or 0
-                    active_days = result['active_days'] or 0
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_days,
+                    AVG(tasks_completed) as avg_tasks,
+                    AVG(mood) as avg_mood,
+                    AVG(energy) as avg_energy,
+                    AVG(water_intake) as avg_water,
+                    COUNT(DISTINCT progress_date) as active_days
+                FROM user_progress 
+                WHERE user_id = %s AND progress_date >= CURRENT_DATE - INTERVAL '7 days'
+            """, (user_id,))
+            
+            result = cursor.fetchone()
+            
+            total_days = result['total_days'] or 0
+            avg_tasks = result['avg_tasks'] or 0
+            avg_mood = result['avg_mood'] or 0
+            avg_energy = result['avg_energy'] or 0
+            avg_water = result['avg_water'] or 0
+            active_days = result['active_days'] or 0
 
-                    # Рассчитываем проценты и динамику
-                    tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
-                    mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
-                    energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
-                    water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
-                    activity_str = f"{active_days}/7 дней"
+            # Рассчитываем проценты и динамику
+            tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
+            mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
+            energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
+            water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
+            activity_str = f"{active_days}/7 дней"
 
-                    # Динамика
-                    mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
-                    energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
-                    productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
+            # Динамика
+            mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
+            energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
+            productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
-                    # Получаем дополнительную информацию для профиля
-                    usage_days = await get_user_usage_days(user_id)
-                    level_info = await get_user_level_info(user_id)
+            # Получаем дополнительную информацию для профиля
+            usage_days = get_user_usage_days(user_id)
+            level_info = get_user_level_info(user_id)
 
-                    # Персональный совет
-                    advice = "Продолжайте в том же духе! Вы на правильном пути."
-                    if avg_water and avg_water < 6:
-                        advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
-                    elif avg_mood and avg_mood < 6:
-                        advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
+            # Персональный совет
+            advice = "Продолжайте в том же духе! Вы на правильном пути."
+            if avg_water and avg_water < 6:
+                advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
+            elif avg_mood and avg_mood < 6:
+                advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
 
-                    await update.message.reply_text(
-                        f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
-                        f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-                        f"✅ Выполнено задач: {tasks_completed}\n"
-                        f"😊 Среднее настроение: {mood_str}\n"
-                        f"⚡ Уровень энергии: {energy_str}\n"
-                        f"💧 Вода в среднем: {water_str}\n"
-                        f"🏃 Активность: {activity_str}\n\n"
-                        f"📈 ДИНАМИКА:\n"
-                        f"• Настроение: {mood_dynamics}\n"
-                        f"• Энергия: {energy_dynamics}\n"
-                        f"• Продуктивность: {productivity_dynamics}\n\n"
-                        f"🎯 СОВЕТ: {advice}"
-                    )
-                    
+            await update.message.reply_text(
+                f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
+                f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+                f"✅ Выполнено задач: {tasks_completed}\n"
+                f"😊 Среднее настроение: {mood_str}\n"
+                f"⚡ Уровень энергии: {energy_str}\n"
+                f"💧 Вода в среднем: {water_str}\n"
+                f"🏃 Активность: {activity_str}\n\n"
+                f"📈 ДИНАМИКА:\n"
+                f"• Настроение: {mood_dynamics}\n"
+                f"• Энергия: {energy_dynamics}\n"
+                f"• Продуктивность: {productivity_dynamics}\n\n"
+                f"🎯 СОВЕТ: {advice}"
+            )
+            
         except Exception as e:
             logger.error(f"❌ Ошибка получения прогресса для {user_id}: {e}")
             await update.message.reply_text("❌ Ошибка при получении статистики. Попробуйте позже.")
+        finally:
+            conn.close()
 
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает профиль пользователя"""
     user = update.effective_user
     user_id = user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
-    if not await check_user_registered(user_id):
+    if not check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     # Получаем данные для профиля
-    main_goal = await get_user_main_goal(user_id)
-    usage_days = await get_user_usage_days(user_id)
-    level_info = await get_user_level_info(user_id)
-    favorite_ritual = await get_favorite_ritual(user_id)
+    main_goal = get_user_main_goal(user_id)
+    usage_days = get_user_usage_days(user_id)
+    level_info = get_user_level_info(user_id)
+    favorite_ritual = get_favorite_ritual(user_id)
     
     # Получаем статистику по планам
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM user_plans WHERE user_id = %s", 
-                    (user_id,)
-                )
-                total_plans_result = await cursor.fetchone()
-                total_plans = total_plans_result[0] if total_plans_result else 0
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM user_plans WHERE user_id = %s", 
+            (user_id,)
+        )
+        total_plans_result = cursor.fetchone()
+        total_plans = total_plans_result[0] if total_plans_result else 0
 
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM user_plans WHERE user_id = %s AND status = 'completed'", 
-                    (user_id,)
-                )
-                completed_plans_result = await cursor.fetchone()
-                completed_plans = completed_plans_result[0] if completed_plans_result else 0
+        cursor.execute(
+            "SELECT COUNT(*) FROM user_plans WHERE user_id = %s AND status = 'completed'", 
+            (user_id,)
+        )
+        completed_plans_result = cursor.fetchone()
+        completed_plans = completed_plans_result[0] if completed_plans_result else 0
 
-                # Вычисляем процент выполнения планов
-                plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
-                
-                # Формируем профиль
-                profile_text = (
-                    f"👤 ВАШ ПРОФИЛЬ\n\n"
-                    f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-                    f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
-                    f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
-                    f"🏆 ДОСТИЖЕНИЯ:\n"
-                    f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
-                    f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
-                    f"• Любимый ритуал: {favorite_ritual}\n\n"
-                    f"🎮 УРОВЕНЬ: {level_info['level']}\n"
-                    f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
-                    f"💡 РЕКОМЕНДАЦИИ:\n"
-                    f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
-                )
-                
-                await update.message.reply_text(profile_text)
+        # Вычисляем процент выполнения планов
+        plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
+        
+        # Формируем профиль
+        profile_text = (
+            f"👤 ВАШ ПРОФИЛЬ\n\n"
+            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+            f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
+            f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
+            f"🏆 ДОСТИЖЕНИЯ:\n"
+            f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
+            f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
+            f"• Любимый ритуал: {favorite_ritual}\n\n"
+            f"🎮 УРОВЕНЬ: {level_info['level']}\n"
+            f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
+            f"💡 РЕКОМЕНДАЦИИ:\n"
+            f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
+        )
+        
+        await update.message.reply_text(profile_text)
     except Exception as e:
         logger.error(f"❌ Ошибка получения профиля для {user_id}: {e}")
         await update.message.reply_text("❌ Ошибка при получении профиля. Попробуйте позже.")
+    finally:
+        conn.close()
 
 async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Объясняет систему очков"""
@@ -3448,7 +3549,7 @@ async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
     user_id = update.effective_user.id
-    await update_user_activity(user_id)
+    update_user_activity(user_id)
     
     help_text = (
         "ℹ️ Справка по командам:\n\n"
@@ -3533,7 +3634,7 @@ async def remind_me_command(update: Update, context: CallbackContext):
         'days': []
     }
     
-    success = await add_reminder_to_db(user_id, reminder_data)
+    success = add_reminder_to_db(user_id, reminder_data)
     
     if success:
         await update.message.reply_text(
@@ -3615,7 +3716,7 @@ async def regular_remind_command(update: Update, context: CallbackContext):
         'days': days
     }
     
-    success = await add_reminder_to_db(user_id, reminder_data)
+    success = add_reminder_to_db(user_id, reminder_data)
     
     if success:
         days_display = ', '.join(days) if days != ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'] else 'ежедневно'
@@ -3632,7 +3733,7 @@ async def my_reminders_command(update: Update, context: CallbackContext):
     """Показывает активные напоминания"""
     user_id = update.effective_user.id
     
-    reminders = await get_user_reminders(user_id)
+    reminders = get_user_reminders(user_id)
     
     if not reminders:
         await update.message.reply_text(
@@ -3674,7 +3775,7 @@ async def delete_remind_command(update: Update, context: CallbackContext):
     
     try:
         reminder_id = int(context.args[0])
-        success = await delete_reminder_from_db(reminder_id)
+        success = delete_reminder_from_db(reminder_id)
         
         if success:
             await update.message.reply_text(
@@ -3699,36 +3800,42 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute("SELECT COUNT(*) FROM clients")
-                total_users_result = await cursor.fetchone()
-                total_users = total_users_result[0] if total_users_result else 0
-                
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM clients WHERE DATE(last_activity) = CURRENT_DATE"
-                )
-                active_today_result = await cursor.fetchone()
-                active_today = active_today_result[0] if active_today_result else 0
-                
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM messages WHERE direction = 'incoming'"
-                )
-                total_messages_result = await cursor.fetchone()
-                total_messages = total_messages_result[0] if total_messages_result else 0
-                
-                await cursor.execute("SELECT COUNT(*) FROM questionnaire_answers")
-                total_answers_result = await cursor.fetchone()
-                total_answers = total_answers_result[0] if total_answers_result else 0
-                
-                await cursor.execute("SELECT COUNT(*) FROM user_plans")
-                total_plans_result = await cursor.fetchone()
-                total_plans = total_plans_result[0] if total_plans_result else 0
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM clients")
+        total_users_result = cursor.fetchone()
+        total_users = total_users_result[0] if total_users_result else 0
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM clients WHERE DATE(last_activity) = CURRENT_DATE"
+        )
+        active_today_result = cursor.fetchone()
+        active_today = active_today_result[0] if active_today_result else 0
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM messages WHERE direction = 'incoming'"
+        )
+        total_messages_result = cursor.fetchone()
+        total_messages = total_messages_result[0] if total_messages_result else 0
+        
+        cursor.execute("SELECT COUNT(*) FROM questionnaire_answers")
+        total_answers_result = cursor.fetchone()
+        total_answers = total_answers_result[0] if total_answers_result else 0
+        
+        cursor.execute("SELECT COUNT(*) FROM user_plans")
+        total_plans_result = cursor.fetchone()
+        total_plans = total_plans_result[0] if total_plans_result else 0
         
     except Exception as e:
         logger.error(f"❌ Ошибка получения статистики: {e}")
         total_users = active_today = total_messages = total_answers = total_plans = 0
+    finally:
+        conn.close()
     
     stats_text = f"📊 Статистика бота:\n\n"
     stats_text += f"👥 Всего пользователей: {total_users}\n"
@@ -3750,16 +3857,22 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ У вас нет прав для этой команды.")
         return
     
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка подключения к базе данных")
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                await cursor.execute(
-                    "SELECT user_id, username, first_name, last_activity FROM clients ORDER BY last_activity DESC LIMIT 20"
-                )
-                users = await cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, username, first_name, last_activity FROM clients ORDER BY last_activity DESC LIMIT 20"
+        )
+        users = cursor.fetchall()
     except Exception as e:
         logger.error(f"❌ Ошибка получения списка пользователей: {e}")
         users = []
+    finally:
+        conn.close()
     
     if not users:
         await update.message.reply_text("📭 Пользователей не найдено.")
@@ -3789,8 +3902,8 @@ async def handle_all_messages(update: Update, context: CallbackContext):
     message_text = update.message.text
     
     # Сохраняем входящее сообщение
-    await save_message(user_id, message_text, 'incoming')
-    await update_user_activity(user_id)
+    save_message(user_id, message_text, 'incoming')
+    update_user_activity(user_id)
     
     logger.info(f"💬 Получено сообщение от {user_id}: {message_text}")
     
@@ -3857,16 +3970,19 @@ async def handle_continue_choice(update: Update, context: CallbackContext) -> in
         
     elif choice == '🔄 Начать заново':
         # Очищаем старые ответы
-        try:
-            async with get_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        "DELETE FROM questionnaire_answers WHERE user_id = %s", 
-                        (update.effective_user.id,)
-                    )
-                    await conn.commit()
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления ответов: {e}")
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM questionnaire_answers WHERE user_id = %s", 
+                    (update.effective_user.id,)
+                )
+                conn.commit()
+            except Exception as e:
+                logger.error(f"❌ Ошибка удаления ответов: {e}")
+            finally:
+                conn.close()
         
         # Начинаем заново
         context.user_data['current_question'] = 0
@@ -3888,13 +4004,16 @@ async def handle_continue_choice(update: Update, context: CallbackContext) -> in
 
 async def send_morning_plan(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет утренний план пользователям"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                await cursor.execute(
-                    "SELECT user_id, first_name, username FROM clients WHERE status = 'active'"
-                )
-                users = await cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, first_name, username FROM clients WHERE status = 'active'"
+        )
+        users = cursor.fetchall()
         
         for user in users:
             user_id = user['user_id']
@@ -3946,16 +4065,21 @@ async def send_morning_plan(context: ContextTypes.DEFAULT_TYPE):
                     
     except Exception as e:
         logger.error(f"❌ Ошибка в send_morning_plan: {e}")
+    finally:
+        conn.close()
 
 async def send_evening_survey(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет вечерний опрос пользователям"""
+    conn = get_db_connection()
+    if not conn:
+        return
+        
     try:
-        async with get_db_connection() as conn:
-            async with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                await cursor.execute(
-                    "SELECT user_id, first_name FROM clients WHERE status = 'active'"
-                )
-                users = await cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, first_name FROM clients WHERE status = 'active'"
+        )
+        users = cursor.fetchall()
         
         for user in users:
             user_id = user['user_id']
@@ -3987,6 +4111,8 @@ async def send_evening_survey(context: ContextTypes.DEFAULT_TYPE):
                 
     except Exception as e:
         logger.error(f"❌ Ошибка в send_evening_survey: {e}")
+    finally:
+        conn.close()
 
 # ========== ОБРАБОТЧИК ЕСТЕСТВЕННЫХ НАПОМИНАНИЙ ==========
 
@@ -3998,7 +4124,7 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
     logger.info(f"🔍 Обработка естественного запроса: {message_text}")
     
     # Проверяем лимит напоминаний (максимум 20 на пользователя)
-    reminders = await get_user_reminders(user_id)
+    reminders = get_user_reminders(user_id)
     if len(reminders) >= 20:
         await update.message.reply_text(
             "❌ Достигнут лимит напоминаний (20).\n"
@@ -4021,7 +4147,7 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
         return
     
     # Добавляем напоминание в базу
-    success = await add_reminder_to_db(user_id, reminder_data)
+    success = add_reminder_to_db(user_id, reminder_data)
     
     if success:
         if reminder_data['type'] == 'regular':
