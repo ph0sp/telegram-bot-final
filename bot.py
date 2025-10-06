@@ -1960,6 +1960,75 @@ def delete_reminder_from_db(reminder_id: int) -> bool:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
+# ========== СИСТЕМА ОТПРАВКИ НАПОМИНАНИЙ ==========
+
+async def send_reminder_job(context: CallbackContext):
+    """Отправляет напоминания пользователям"""
+    try:
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        
+        # Получаем текущее время и день недели
+        now = datetime.now()
+        current_time = now.strftime("%H:%M")
+        current_day_rus = now.strftime("%A").lower()
+        day_translation = {
+            'monday': 'пн', 'tuesday': 'вт', 'wednesday': 'ср',
+            'thursday': 'чт', 'friday': 'пт', 'saturday': 'сб', 'sunday': 'вс'
+        }
+        current_day = day_translation.get(current_day_rus, 'пн')
+        
+        # Ищем напоминания для текущего времени
+        c.execute('''SELECT ur.id, ur.user_id, ur.reminder_text, c.first_name 
+                     FROM user_reminders ur 
+                     JOIN clients c ON ur.user_id = c.user_id 
+                     WHERE ur.is_active = 1 AND ur.reminder_time = ? 
+                     AND (ur.days_of_week LIKE ? OR ur.days_of_week = 'ежедневно' OR ur.days_of_week = '')''',
+                  (current_time, f'%{current_day}%'))
+        
+        reminders = c.fetchall()
+        
+        for reminder_id, user_id, reminder_text, first_name in reminders:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🔔 Напоминание: {reminder_text}"
+                )
+                logger.info(f"✅ Напоминание отправлено пользователю {user_id}")
+                
+                # Если это разовое напоминание - деактивируем его
+                c.execute('''SELECT reminder_type FROM user_reminders WHERE id = ?''', (reminder_id,))
+                reminder_type = c.fetchone()[0]
+                
+                if reminder_type == 'once':
+                    c.execute('''UPDATE user_reminders SET is_active = 0 WHERE id = ?''', (reminder_id,))
+                    conn.commit()
+                    logger.info(f"📝 Разовое напоминание {reminder_id} деактивировано")
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки напоминания {user_id}: {e}")
+        
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в send_reminder_job: {e}")
+
+def schedule_reminders(application):
+    """Настраивает периодическую проверку напоминаний"""
+    try:
+        job_queue = application.job_queue
+        if job_queue:
+            # Проверяем напоминания каждую минуту
+            job_queue.run_repeating(
+                callback=send_reminder_job,
+                interval=60,  # 60 секунд
+                first=10,     # начать через 10 секунд после запуска
+                name="reminder_checker"
+            )
+            logger.info("✅ Система напоминаний запущена")
+    except Exception as e:
+        logger.error(f"❌ Ошибка настройки напоминаний: {e}")
+
 # ========== GOOGLE SHEETS МЕНЕДЖЕР ==========
 
 class GoogleSheetsManager:
@@ -2070,12 +2139,15 @@ sheets_manager = GoogleSheetsManager()
 # ========== ОСНОВНЫЕ КОМАНДЫ БОТА ==========
 
 async def start(update: Update, context: CallbackContext) -> int:
-    """Обработчик команды /start"""
+    """Обработчик команды /start с восстановлением состояния"""
     user = update.effective_user
     user_id = user.id
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
+    
+    # Восстанавливаем состояние анкеты
+    questionnaire_state = restore_questionnaire_state(user_id)
     
     conn = sqlite3.connect('clients.db')
     c = conn.cursor()
@@ -2083,7 +2155,8 @@ async def start(update: Update, context: CallbackContext) -> int:
     has_answers = c.fetchone()[0] > 0
     conn.close()
     
-    if has_answers:
+    if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
+        # Анкета уже полностью заполнена
         keyboard = [
             ['📊 Прогресс', '👤 Профиль'],
             ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -2092,13 +2165,33 @@ async def start(update: Update, context: CallbackContext) -> int:
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
         await update.message.reply_text(
-            "✅ Вы уже зарегистрированы!\n\n"
+            "✅ Вы уже заполнили анкету!\n\n"
             "Добро пожаловать обратно! Что хотите сделать?",
             reply_markup=reply_markup
         )
         
         return ConversationHandler.END
+        
+    elif has_answers and questionnaire_state['current_question'] < len(QUESTIONS):
+        # Анкета заполнена частично - предлагаем продолжить
+        keyboard = [
+            ['✅ Продолжить анкету', '🔄 Начать зановo'],
+            ['❌ Отменить']
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+        
+        await update.message.reply_text(
+            f"📋 У вас есть незавершенная анкета!\n\n"
+            f"Заполнено вопросов: {questionnaire_state['current_question']} из {len(QUESTIONS)}\n"
+            f"Хотите продолжить или начать заново?",
+            reply_markup=reply_markup
+        )
+        
+        context.user_data['questionnaire_state'] = questionnaire_state
+        return GENDER
+        
     else:
+        # Новая анкета
         keyboard = [['👨 Мужской', '👩 Женский']]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
         
@@ -2109,7 +2202,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         )
         
         return GENDER
-
+    
 async def gender_choice(update: Update, context: CallbackContext) -> int:
     """Обработчик выбора пола ассистента"""
     gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
@@ -3021,6 +3114,81 @@ async def help_command(update: Update, context: CallbackContext):
     )
     
     await update.message.reply_text(help_text)
+
+# ========== ВОССТАНОВЛЕНИЕ АНКЕТЫ ==========
+
+def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
+    """Восстанавливает состояние анкеты пользователя из базы данных"""
+    conn = sqlite3.connect('clients.db')
+    c = conn.cursor()
+    
+    # Получаем все ответы пользователя
+    c.execute('''SELECT question_number, answer_text 
+                 FROM questionnaire_answers 
+                 WHERE user_id = ? 
+                 ORDER BY question_number''', (user_id,))
+    
+    answers = {}
+    for question_num, answer_text in c.fetchall():
+        answers[question_num] = answer_text
+    
+    conn.close()
+    
+    if answers:
+        # Определяем текущий вопрос (следующий после последнего отвеченного)
+        last_question = max(answers.keys())
+        current_question = last_question + 1 if last_question < len(QUESTIONS) else last_question
+        
+        return {
+            'current_question': current_question,
+            'answers': answers,
+            'has_previous_answers': True
+        }
+    
+    return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+
+async def handle_continue_choice(update: Update, context: CallbackContext) -> int:
+    """Обрабатывает выбор продолжения анкеты"""
+    choice = update.message.text
+    questionnaire_state = context.user_data.get('questionnaire_state', {})
+    
+    if choice == '✅ Продолжить анкету':
+        # Восстанавливаем данные из базы
+        context.user_data['current_question'] = questionnaire_state['current_question']
+        context.user_data['answers'] = questionnaire_state['answers']
+        
+        await update.message.reply_text(
+            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Отправляем текущий вопрос
+        await update.message.reply_text(QUESTIONS[questionnaire_state['current_question']])
+        return FIRST_QUESTION
+        
+    elif choice == '🔄 Начать заново':
+        # Очищаем старые ответы
+        conn = sqlite3.connect('clients.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM questionnaire_answers WHERE user_id = ?", (update.effective_user.id,))
+        conn.commit()
+        conn.close()
+        
+        # Начинаем заново
+        context.user_data['current_question'] = 0
+        context.user_data['answers'] = {}
+        
+        await update.message.reply_text(
+            "🔄 Начинаем анкету заново...",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        await update.message.reply_text(QUESTIONS[0])
+        return FIRST_QUESTION
+        
+    else:
+        await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
 
 # ========== КОМАНДЫ ТРЕКИНГА ==========
 
@@ -4481,10 +4649,56 @@ async def button_callback(update: Update, context: CallbackContext):
         await query.edit_message_text(f"📋 Создание плана для пользователя {user_id}. Используйте /add_plan")
 
 async def handle_all_messages(update: Update, context: CallbackContext):
-    """Обрабатывает все текстовые сообщения"""
+    """Обрабатывает все текстовые сообщения включая кнопки"""
     user_id = update.effective_user.id
     message_text = update.message.text
     
+    # Сохраняем входящее сообщение
+    save_message(user_id, message_text, 'incoming')
+    update_user_activity(user_id)
+    
+    logger.info(f"💬 Получено сообщение от {user_id}: {message_text}")
+    
+    # Проверяем, является ли сообщение напоминанием
+    if any(word in message_text.lower() for word in ['напомни', 'напоминай']):
+        await handle_reminder_nlp(update, context)
+        return
+    
+    # Обработка нажатий на кнопки
+    button_handlers = {
+        '📊 прогресс': progress_command,
+        '👤 профиль': profile_command,
+        '📋 план на сегодня': plan_command,
+        '🔔 мои напоминания': my_reminders_command,
+        'ℹ️ помощь': help_command,
+        '🎮 очки опыта': points_info_command,
+        '📊 Прогресс': progress_command,
+        '👤 Профиль': profile_command, 
+        '📋 План на сегодня': plan_command,
+        '🔔 Мои напоминания': my_reminders_command,
+        'ℹ️ Помощь': help_command,
+        '🎮 Очки опыта': points_info_command
+    }
+    
+    if message_text.lower() in [key.lower() for key in button_handlers.keys()]:
+        # Найдем правильный регистр для вызова функции
+        for key, handler in button_handlers.items():
+            if key.lower() == message_text.lower():
+                await handler(update, context)
+                return
+    
+    # Если это не команда и не напоминание, отвечаем стандартным сообщением
+    await update.message.reply_text(
+        "🤖 Я ваш ассистент по продуктивности!\n\n"
+        "Используйте кнопки меню или команды:\n"
+        "• /start - начать работу\n"  
+        "• /plan - план на сегодня\n"
+        "• /progress - ваш прогресс\n"
+        "• /help - все команды\n\n"
+        "Или напишите напоминание:\n"
+        "'напомни мне в 20:00 сделать зарядку'"
+    )
+
     # Сохраняем входящее сообщение
     save_message(user_id, message_text, 'incoming')
     update_user_activity(user_id)
@@ -4502,14 +4716,16 @@ def main():
     try:
         application = Application.builder().token(TOKEN).build()
 
-        # ✅ ДОБАВЛЯЕМ ОБРАБОТЧИК ОШИБОК
         application.add_error_handler(error_handler)
 
-        # Основной обработчик диалога
+        # ОБНОВЛЕННЫЙ обработчик диалога
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
-                GENDER: [MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)],
+                GENDER: [
+                    MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice),
+                    MessageHandler(filters.Regex('^(✅ Продолжить анкету|🔄 Начать заново|❌ Отменить)$'), handle_continue_choice)
+                ],
                 FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
@@ -4535,7 +4751,7 @@ def main():
         application.add_handler(CommandHandler("my_reminders", my_reminders_command))
         application.add_handler(CommandHandler("delete_remind", delete_remind_command))
 
-        # ✅ ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ КОМАНДЫ АДМИНИСТРАТОРА
+        # Команды для администратора
         application.add_handler(CommandHandler("create_plan", create_plan_command))
         application.add_handler(CommandHandler("set_plan", set_plan_command))
         application.add_handler(CommandHandler("admin_help", admin_help))
@@ -4544,9 +4760,12 @@ def main():
         application.add_handler(CommandHandler("broadcast", broadcast_command))
         application.add_handler(CommandHandler("update_sheets", update_sheets_command))
         
-        # ✅ ДОБАВЛЯЕМ ОБРАБОТЧИКИ КНОПОК И СООБЩЕНИЙ
+        # Обработчики кнопок и сообщений
         application.add_handler(CallbackQueryHandler(button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
+        
+        # ✅ ДОБАВЛЯЕМ СИСТЕМУ НАПОМИНАНИЙ
+        schedule_reminders(application)
         
         # Настройка JobQueue для автоматических сообщений
         try:
@@ -4583,6 +4802,6 @@ def main():
         
     except Exception as e:
         logger.error(f"❌ Ошибка запуска бота: {e}")
-
+        
 if __name__ == '__main__':
     main()
