@@ -42,7 +42,7 @@ from handlers.admin import (
     admin_add_plan, add_plan_user, add_plan_date, 
     add_plan_content, admin_stats, admin_users
 )
-ffrom handlers.reminder import (
+from handlers.reminder import (
     remind_me_command, regular_remind_command, 
     my_reminders_command, delete_remind_command,
     handle_reminder_nlp, button_callback
