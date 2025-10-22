@@ -49,7 +49,7 @@ from handlers.reminder import (
 )
 from handlers.admin import button_callback
 from handlers.base import handle_all_messages
-from services.reminder import (
+from handlers.reminder import (
     schedule_reminders, send_morning_plan, send_evening_survey
 )
 
