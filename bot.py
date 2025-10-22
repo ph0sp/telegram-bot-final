@@ -29,7 +29,7 @@ from database import (
     add_reminder_to_db, get_user_reminders, delete_reminder_from_db,
     restore_questionnaire_state
 )
-from handlers.start_handlers import (
+from handlers.start import (
     start, gender_choice, handle_question, finish_questionnaire, 
     handle_continue_choice, cancel
 )
