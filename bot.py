@@ -45,8 +45,9 @@ from handlers.admin import (
 from handlers.reminder import (
     remind_me_command, regular_remind_command, 
     my_reminders_command, delete_remind_command,
-    handle_reminder_nlp, handle_all_messages, button_callback
+    handle_reminder_nlp, button_callback
 )
+from handlers.base import handle_all_messages
 from services.reminder import (
     schedule_reminders, send_morning_plan, send_evening_survey
 )
