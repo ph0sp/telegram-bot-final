@@ -33,21 +33,21 @@ from handlers.start import (
     start, gender_choice, handle_question, finish_questionnaire, 
     handle_continue_choice, cancel
 )
-from handlers.user_handlers import (
+from handlers.user import (
     plan_command, progress_command, profile_command, 
     points_info_command, help_command,
     done_command, mood_command, energy_command, water_command
 )
-from handlers.admin_handlers import (
+from handlers.admin import (
     admin_add_plan, add_plan_user, add_plan_date, 
     add_plan_content, admin_stats, admin_users
 )
-from handlers.reminder_handlers import (
+from handlers.reminder import (
     remind_me_command, regular_remind_command, 
     my_reminders_command, delete_remind_command,
     handle_reminder_nlp, handle_all_messages, button_callback
 )
-from services.reminder_service import (
+from services.reminder import (
     schedule_reminders, send_morning_plan, send_evening_survey
 )
 
