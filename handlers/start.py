@@ -3,7 +3,7 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 
-from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, FIRST_QUESTION
+from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, READY_CONFIRMATION
 from database import (
     save_user_info, update_user_activity, check_user_registered,
     save_questionnaire_answer, save_message, get_db_connection
@@ -93,8 +93,34 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Устанавливаем, что следующий шаг - подтверждение готовности
     context.user_data['current_question'] = -1
     
-    logger.info(f"🔁 Возвращаем состояние FIRST_QUESTION: {FIRST_QUESTION}")
-    return FIRST_QUESTION
+    logger.info(f"🔁 Возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
+    return READY_CONFIRMATION
+
+async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработчик подтверждения готовности начать анкету"""
+    user_id = update.effective_user.id
+    answer_text = update.message.text
+    
+    current_question = context.user_data['current_question']
+    logger.info(f"🔍 Обрабатываем подтверждение готовности: {answer_text[:50]}...")
+    
+    # Любой ответ считается согласием - начинаем анкету
+    logger.info(f"✅ Пользователь подтвердил начало анкеты: {answer_text}")
+    
+    # Отправляем вступительное сообщение и ПЕРВЫЙ вопрос ОДНИМ сообщением
+    await update.message.reply_text(
+        "Давайте начнем!\n"
+        "Последовательно отвечайте на вопросы в свободной форме, как вам удобно.\n"
+        "Начнем с самого главного\n\n"
+        "Блок 1: Цель и главный фокус\n\n" +
+        QUESTIONS[0]
+    )
+    
+    # Переходим к первому вопросу
+    context.user_data['current_question'] = 0
+    
+    logger.info(f"🔁 Переходим к вопросу 0, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
+    return READY_CONFIRMATION
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
@@ -103,26 +129,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     current_question = context.user_data['current_question']
     logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
-    
-    # Если это этап "Готовы начать?" (current_question = -1)
-    if current_question == -1:
-        # Любой ответ считается согласием - начинаем анкету
-        logger.info(f"✅ Пользователь подтвердил начало анкеты: {answer_text}")
-        
-        # Отправляем вступительное сообщение и ПЕРВЫЙ вопрос
-        await update.message.reply_text(
-            "Давайте начнем!\n"
-            "Последовательно отвечайте на вопросы в свободной форме, как вам удобно.\n"
-            "Начнем с самого главного\n\n"
-            "Блок 1: Цель и главный фокус"
-        )
-        
-        # Отправляем ПЕРВЫЙ вопрос (индекс 0 в массиве QUESTIONS)
-        await update.message.reply_text(QUESTIONS[0])
-        
-        # Переходим к первому вопросу
-        context.user_data['current_question'] = 0
-        return FIRST_QUESTION
     
     # Сохраняем ответ на текущий вопрос
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
@@ -135,7 +141,9 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Отправляем следующий вопрос
         context.user_data['current_question'] = next_question
         await update.message.reply_text(QUESTIONS[next_question])
-        return FIRST_QUESTION
+        
+        logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
+        return READY_CONFIRMATION
     else:
         # Анкета завершена
         return await finish_questionnaire(update, context)
