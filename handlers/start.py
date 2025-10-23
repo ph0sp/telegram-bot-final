@@ -19,9 +19,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     logger.info(f"🎯 КОМАНДА /start ВЫЗВАНА пользователем {user_id} ({user.first_name})")
     
-    # ДОБАВЛЕНО: Проверка что функция действительно вызывается
-    logger.info(f"🔥 ФУНКЦИЯ START ВЫЗВАНА!")
-    
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
@@ -39,7 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"❌ Ошибка очистки ответов: {e}")
     
     # КНОПКИ С ВАШИМИ СМАЙЛИКАМИ
-    keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]  # ИСПОЛЬЗУЕМ ВАШИ СМАЙЛИКИ
+    keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     logger.info(f"📨 Отправляем выбор пола пользователю {user_id}")
@@ -51,12 +48,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     
     # Инициализируем данные анкеты
-    context.user_data['current_question'] = 0
+    context.user_data['current_question'] = -1  # -1 означает этап "Готовы начать?"
     context.user_data['answers'] = {}
     
     logger.info(f"🔁 Возвращаем состояние GENDER ({GENDER}) для пользователя {user_id}")
     
-    return GENDER  # 0
+    return GENDER
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
@@ -70,10 +67,10 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     if gender == 'Мужской':
         assistant_name = 'Антон'
-        greeting_emoji = '🧌'  # Используем тот же смайлик что и на кнопке
+        greeting_emoji = '🧌'
     else:
         assistant_name = 'Валерия'
-        greeting_emoji = '🧝🏽‍♀️'  # Используем тот же смайлик что и на кнопке
+        greeting_emoji = '🧝🏽‍♀️'
     
     context.user_data['assistant_gender'] = gender
     context.user_data['assistant_name'] = assistant_name
@@ -81,7 +78,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     logger.info(f"✅ Выбран пол: {gender}, ассистент: {assistant_name}")
     
-    # Приветствие с вашими смайликами
+    # Приветствие как в вашем примере
     await update.message.reply_text(
         f'{greeting_emoji} Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -93,40 +90,52 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Проверяем что QUESTIONS существует
-    if not QUESTIONS:
-        logger.error("❌ CRITICAL: QUESTIONS is empty or not defined!")
-        await update.message.reply_text("❌ Произошла ошибка. Попробуйте позже.")
-        return ConversationHandler.END
-    
-    logger.info(f"❓ Всего вопросов: {len(QUESTIONS)}, отправляем первый вопрос")
-    logger.info(f"📝 Первый вопрос: {QUESTIONS[0]}")
-    
-    # Отправляем ПЕРВЫЙ вопрос
-    await update.message.reply_text(QUESTIONS[0])
+    # Устанавливаем, что следующий шаг - подтверждение готовности
+    context.user_data['current_question'] = -1
     
     logger.info(f"🔁 Возвращаем состояние FIRST_QUESTION: {FIRST_QUESTION}")
-    return FIRST_QUESTION  # 1
+    return FIRST_QUESTION
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
     
-    # ДОБАВЛЕНО: Диагностика текущего состояния
-    current_question = context.user_data.get('current_question', 0)
-    logger.info(f"🔍 ОБРАБОТКА ВОПРОСА: текущий_вопрос={current_question}, текст={answer_text[:50]}...")
+    current_question = context.user_data['current_question']
+    logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
     
-    # Сохраняем ответ
+    # Если это этап "Готовы начать?" (current_question = -1)
+    if current_question == -1:
+        # Любой ответ считается согласием - начинаем анкету
+        logger.info(f"✅ Пользователь подтвердил начало анкеты: {answer_text}")
+        
+        # Отправляем вступительное сообщение и ПЕРВЫЙ вопрос
+        await update.message.reply_text(
+            "Давайте начнем!\n"
+            "Последовательно отвечайте на вопросы в свободной форме, как вам удобно.\n"
+            "Начнем с самого главного\n\n"
+            "Блок 1: Цель и главный фокус"
+        )
+        
+        # Отправляем ПЕРВЫЙ вопрос (индекс 0 в массиве QUESTIONS)
+        await update.message.reply_text(QUESTIONS[0])
+        
+        # Переходим к первому вопросу
+        context.user_data['current_question'] = 0
+        return FIRST_QUESTION
+    
+    # Сохраняем ответ на текущий вопрос
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
     # Переходим к следующему вопросу
-    context.user_data['current_question'] += 1
-    if context.user_data['current_question'] < len(QUESTIONS):
+    next_question = current_question + 1
+    
+    if next_question < len(QUESTIONS):
         # Отправляем следующий вопрос
-        await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
-        return FIRST_QUESTION  # 1
+        context.user_data['current_question'] = next_question
+        await update.message.reply_text(QUESTIONS[next_question])
+        return FIRST_QUESTION
     else:
         # Анкета завершена
         return await finish_questionnaire(update, context)
