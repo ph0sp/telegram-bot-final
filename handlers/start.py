@@ -13,16 +13,16 @@ from services.google_sheets import save_client_to_sheets
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /start - ВСЕГДА начинает анкету заново"""
+    """Обработчик команды /start"""
     user = update.effective_user
     user_id = user.id
     
-    logger.info(f"🔍 Пользователь {user_id} запустил /start - начинаем анкету заново")
+    logger.info(f"🔍 Пользователь {user_id} запустил /start")
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
-    # ВСЕГДА очищаем предыдущие ответы
+    # Очищаем предыдущие ответы (новая анкета каждый раз)
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -63,7 +63,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     context.user_data['assistant_name'] = assistant_name
     
-    # ОРИГИНАЛЬНОЕ приветствие (как было изначально)
+    # ПОЛНЫЙ текст приветствия как был изначально
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -75,11 +75,8 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Ждем немного и отправляем ПЕРВЫЙ вопрос отдельным сообщением
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=QUESTIONS[0]
-    )
+    # Отправляем ПЕРВЫЙ вопрос отдельным сообщением
+    await update.message.reply_text(QUESTIONS[0])
     
     return 1  # FIRST_QUESTION
 
@@ -87,37 +84,24 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
-    current_question = context.user_data['current_question']
-    
-    logger.info(f"📝 Получен ответ на вопрос {current_question}: {answer_text[:50]}...")
     
     # Сохраняем ответ
+    current_question = context.user_data['current_question']
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
     # Переходим к следующему вопросу
     context.user_data['current_question'] += 1
-    
-    # Проверяем, есть ли еще вопросы
     if context.user_data['current_question'] < len(QUESTIONS):
-        # Ждем немного перед отправкой следующего вопроса
-        next_question = context.user_data['current_question']
-        logger.info(f"➡️ Отправляем вопрос {next_question}")
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=QUESTIONS[next_question]
-        )
+        await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
         return 1  # FIRST_QUESTION
     else:
-        # Анкета завершена
-        logger.info("✅ Анкета завершена")
         return await finish_questionnaire(update, context)
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершает анкету и отправляет данные"""
     user = update.effective_user
-    assistant_name = context.user_data.get('assistant_name', 'Ассистент')
+    assistant_name = context.user_data['assistant_name']
     
     # Сохраняем данные анкеты в Google Sheets
     user_data = {
@@ -152,10 +136,9 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     
     questionnaire += "📝 Ответы на вопросы:\n\n"
     
-    for i in range(len(QUESTIONS)):
+    for i, question in enumerate(QUESTIONS):
         answer = context.user_data['answers'].get(i, '❌ Нет ответа')
-        short_question = QUESTIONS[i][:100] + "..." if len(QUESTIONS[i]) > 100 else QUESTIONS[i]
-        questionnaire += f"❓ {i+1}. {short_question}:\n"
+        questionnaire += f"❓ {i+1}. {question}:\n"
         questionnaire += f"💬 {answer}\n\n"
     
     # Отправляем админу
