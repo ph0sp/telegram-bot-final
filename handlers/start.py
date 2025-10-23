@@ -13,74 +13,47 @@ from services.google_sheets import save_client_to_sheets
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /start с восстановлением состояния"""
+    """Обработчик команды /start - ВСЕГДА начинает анкету заново"""
     user = update.effective_user
     user_id = user.id
     
-    logger.info(f"🔍 Пользователь {user_id} запустил /start")
+    logger.info(f"🔍 Пользователь {user_id} запустил /start - начинаем анкету заново")
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
-    # Восстанавливаем состояние анкеты
-    questionnaire_state = restore_questionnaire_state(user_id)
+    # ВСЕГДА очищаем предыдущие ответы
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM questionnaire_answers WHERE user_id = %s", 
+                (user_id,)
+            )
+            conn.commit()
+            logger.info(f"✅ Очищены предыдущие ответы для пользователя {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка очистки ответов: {e}")
     
-    logger.info(f"📋 Состояние анкеты для {user_id}: "
-               f"current_question={questionnaire_state['current_question']}, "
-               f"has_answers={questionnaire_state['has_previous_answers']}")
+    # Начинаем новую анкету
+    keyboard = [['👨 Мужской', '👩 Женский']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
-    # Если анкета полностью заполнена
-    if questionnaire_state['current_question'] >= len(QUESTIONS):
-        keyboard = [
-            ['📊 Прогресс', '👤 Профиль'],
-            ['📋 План на сегодня', '🔔 Мои напоминания'],
-            ['ℹ️ Помощь', '🎮 Очки опыта']
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        
-        await update.message.reply_text(
-            "✅ Вы уже заполнили анкету!\n\n"
-            "Добро пожаловать обратно! Что хотите сделать?",
-            reply_markup=reply_markup
-        )
-        
-        return ConversationHandler.END
-        
-    # Если анкета заполнена частично
-    elif questionnaire_state['has_previous_answers']:
-        keyboard = [
-            ['✅ Продолжить анкету', '🔄 Начать заново'],
-            ['❌ Отменить']
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-        
-        await update.message.reply_text(
-            f"📋 У вас есть незавершенная анкета!\n\n"
-            f"Заполнено вопросов: {questionnaire_state['current_question']} из {len(QUESTIONS)}\n"
-            f"Хотите продолжить или начать заново?",
-            reply_markup=reply_markup
-        )
-        
-        context.user_data['questionnaire_state'] = questionnaire_state
-        return 2  # RESTORE_CHOICE
-        
-    else:
-        # Новая анкета
-        keyboard = [['👨 Мужской', '👩 Женский']]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-        
-        await update.message.reply_text(
-            '👋 Добро пожаловать! Я ваш персональный ассистент по продуктивности.\n\n'
-            'Для начала выберите пол ассистента:',
-            reply_markup=reply_markup
-        )
-        
-        return 0  # GENDER
+    await update.message.reply_text(
+        '👋 Добро пожаловать! Я ваш персональный ассистент по продуктивности.\n\n'
+        'Для начала выберите пол ассистента:',
+        reply_markup=reply_markup
+    )
+    
+    # Инициализируем данные анкеты
+    context.user_data['current_question'] = 0
+    context.user_data['answers'] = {}
+    
+    return 0  # GENDER
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
     gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
-    context.user_data['assistant_gender'] = gender
     
     if gender == 'Мужской':
         assistant_name = 'Антон'
@@ -88,81 +61,24 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         assistant_name = 'Валерия'
     
     context.user_data['assistant_name'] = assistant_name
-    context.user_data['current_question'] = 0
-    context.user_data['answers'] = {}
     
-    # Отправляем приветствие одним сообщением
+    # Отправляем приветствие и ПЕРВЫЙ вопрос одним сообщением
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
-        f'Я составлю для вас сбалансированный план на месяц, а затем мы будем ежедневно отслеживать прогресс и ваше состояние, '
-        f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
-        f'Для составления плана, который будет работать именно для вас, мне нужно понять ваш ритм жизни и цели. '
-        f'Это займет около 25-30 минут. Но в результате вы получите персональную стратегию на месяц, а не шаблонный список дел.\n\n'
-        f'Готовы начать?',
+        f'{QUESTIONS[0]}',
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Отправляем ПЕРВЫЙ вопрос отдельным сообщением
-    await update.message.reply_text(QUESTIONS[0])
     return 1  # FIRST_QUESTION
-
-async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обрабатывает выбор продолжения анкеты (продолжить или начать заново)"""
-    choice = update.message.text
-    user_id = update.effective_user.id
-    questionnaire_state = context.user_data.get('questionnaire_state', {})
-    
-    if choice == '✅ Продолжить анкету':
-        # Восстанавливаем данные из базы
-        context.user_data['current_question'] = questionnaire_state['current_question']
-        context.user_data['answers'] = questionnaire_state['answers']
-        context.user_data['assistant_name'] = 'Антон'  # По умолчанию
-        
-        # Отправляем ТОЛЬКО текущий вопрос
-        await update.message.reply_text(
-            QUESTIONS[questionnaire_state['current_question']],
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        return 1  # FIRST_QUESTION
-        
-    elif choice == '🔄 Начать заново':
-        # Очищаем старые ответы
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "DELETE FROM questionnaire_answers WHERE user_id = %s", 
-                    (user_id,)
-                )
-                conn.commit()
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления ответов: {e}")
-        
-        # Начинаем заново
-        context.user_data['current_question'] = 0
-        context.user_data['answers'] = {}
-        
-        # Отправляем ПЕРВЫЙ вопрос
-        await update.message.reply_text(
-            QUESTIONS[0],
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        return 1  # FIRST_QUESTION
-        
-    else:
-        await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
+    current_question = context.user_data['current_question']
     
     # Сохраняем ответ
-    current_question = context.user_data['current_question']
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
@@ -282,48 +198,3 @@ async def cancel(update: Update, context: CallbackContext) -> int:
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
-
-def restore_questionnaire_state(user_id: int) -> dict:
-    """Восстанавливает состояние анкеты пользователя из PostgreSQL"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем все ответы пользователя
-            cursor.execute('''
-                SELECT question_number, answer_text 
-                FROM questionnaire_answers 
-                WHERE user_id = %s 
-                ORDER BY question_number
-            ''', (user_id,))
-            
-            answers_data = cursor.fetchall()
-            answers = {}
-            for row in answers_data:
-                answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
-            
-            if answers:
-                # Находим ПЕРВЫЙ неотвеченный вопрос
-                current_question = 0
-                for i in range(len(QUESTIONS)):
-                    if i not in answers:
-                        current_question = i
-                        break
-                else:
-                    # Все вопросы отвечены
-                    current_question = len(QUESTIONS)
-                
-                logger.info(f"📊 Восстановлено состояние анкеты для {user_id}: "
-                           f"отвечено {len(answers)} вопросов, текущий вопрос: {current_question}")
-                
-                return {
-                    'current_question': current_question,
-                    'answers': answers,
-                    'has_previous_answers': True
-                }
-            
-            return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка БД при восстановлении анкеты {user_id}: {e}")
-        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
