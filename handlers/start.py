@@ -22,7 +22,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
-    # Очищаем предыдущие ответы (новая анкета каждый раз)
+    # Очищаем предыдущие ответы
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -63,7 +63,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     context.user_data['assistant_name'] = assistant_name
     
-    # ПОЛНЫЙ текст приветствия как был изначально
+    # Полное приветствие как было изначально
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -75,27 +75,35 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Отправляем ПЕРВЫЙ вопрос отдельным сообщением
+    # Ждем ответа пользователя на приветствие
+    return 1  # CONFIRM_START
+
+async def confirm_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение начала анкеты - пользователь отвечает на приветствие"""
+    # После ответа на приветствие отправляем ПЕРВЫЙ вопрос
     await update.message.reply_text(QUESTIONS[0])
-    
-    return 1  # FIRST_QUESTION
+    return 2  # QUESTIONS
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
+    current_question = context.user_data['current_question']
     
     # Сохраняем ответ
-    current_question = context.user_data['current_question']
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
     # Переходим к следующему вопросу
     context.user_data['current_question'] += 1
+    
+    # Проверяем, есть ли еще вопросы
     if context.user_data['current_question'] < len(QUESTIONS):
+        # Отправляем СЛЕДУЮЩИЙ вопрос
         await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
-        return 1  # FIRST_QUESTION
+        return 2  # QUESTIONS
     else:
+        # Анкета завершена
         return await finish_questionnaire(update, context)
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
