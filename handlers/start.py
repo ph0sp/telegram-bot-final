@@ -38,8 +38,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
         has_answers = False
     
+    # Если анкета полностью заполнена
     if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
-        # Анкета уже полностью заполнена
         keyboard = [
             ['📊 Прогресс', '👤 Профиль'],
             ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -55,8 +55,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         return ConversationHandler.END
         
+    # Если анкета заполнена частично
     elif has_answers and questionnaire_state['current_question'] < len(QUESTIONS):
-        # Анкета заполнена частично - предлагаем продолжить
         keyboard = [
             ['✅ Продолжить анкету', '🔄 Начать заново'],
             ['❌ Отменить']
@@ -71,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         
         context.user_data['questionnaire_state'] = questionnaire_state
-        return 0  # GENDER
+        return 2  # RESTORE_CHOICE
         
     else:
         # Новая анкета
@@ -112,6 +112,55 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
     
     return 1  # FIRST_QUESTION
+
+async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает выбор продолжения анкеты (продолжить или начать заново)"""
+    choice = update.message.text
+    user_id = update.effective_user.id
+    questionnaire_state = context.user_data.get('questionnaire_state', {})
+    
+    if choice == '✅ Продолжить анкету':
+        # Восстанавливаем данные из базы
+        context.user_data['current_question'] = questionnaire_state['current_question']
+        context.user_data['answers'] = questionnaire_state['answers']
+        
+        await update.message.reply_text(
+            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Отправляем текущий вопрос
+        await update.message.reply_text(QUESTIONS[questionnaire_state['current_question']])
+        return 1  # FIRST_QUESTION
+        
+    elif choice == '🔄 Начать заново':
+        # Очищаем старые ответы
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM questionnaire_answers WHERE user_id = %s", 
+                    (user_id,)
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления ответов: {e}")
+        
+        # Начинаем заново
+        context.user_data['current_question'] = 0
+        context.user_data['answers'] = {}
+        
+        await update.message.reply_text(
+            "🔄 Начинаем анкету заново...",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        await update.message.reply_text(QUESTIONS[0])
+        return 1  # FIRST_QUESTION
+        
+    else:
+        await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
@@ -227,54 +276,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     
     return ConversationHandler.END
 
-async def handle_continue_choice(update: Update, context: CallbackContext) -> int:
-    """Обрабатывает выбор продолжения анкеты"""
-    choice = update.message.text
-    questionnaire_state = context.user_data.get('questionnaire_state', {})
-    
-    if choice == '✅ Продолжить анкету':
-        # Восстанавливаем данные из базы
-        context.user_data['current_question'] = questionnaire_state['current_question']
-        context.user_data['answers'] = questionnaire_state['answers']
-        
-        await update.message.reply_text(
-            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        # Отправляем текущий вопрос
-        await update.message.reply_text(QUESTIONS[questionnaire_state['current_question']])
-        return 1  # FIRST_QUESTION
-        
-    elif choice == '🔄 Начать заново':
-        # Очищаем старые ответы
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "DELETE FROM questionnaire_answers WHERE user_id = %s", 
-                    (update.effective_user.id,)
-                )
-                conn.commit()
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления ответов: {e}")
-        
-        # Начинаем заново
-        context.user_data['current_question'] = 0
-        context.user_data['answers'] = {}
-        
-        await update.message.reply_text(
-            "🔄 Начинаем анкету заново...",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        await update.message.reply_text(QUESTIONS[0])
-        return 1  # FIRST_QUESTION
-        
-    else:
-        await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
-
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Отменяет текущий диалог"""
     await update.message.reply_text(
@@ -283,7 +284,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     )
     return ConversationHandler.END
 
-# ВОССТАНОВИЛ локальную функцию restore_questionnaire_state
 def restore_questionnaire_state(user_id: int) -> dict:
     """Восстанавливает состояние анкеты пользователя из PostgreSQL"""
     try:
@@ -304,9 +304,9 @@ def restore_questionnaire_state(user_id: int) -> dict:
                 answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
             
             if answers:
-                # Определяем текущий вопрос
+                # Определяем текущий вопрос - следующий после последнего отвеченного
                 last_question = max(answers.keys())
-                current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
+                current_question = last_question + 1
                 
                 return {
                     'current_question': current_question,
