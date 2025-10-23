@@ -28,10 +28,14 @@ from database import (
     get_user_level_info, get_favorite_ritual, get_user_usage_days,
     add_reminder_to_db, get_user_reminders, delete_reminder_from_db
 )
-from handlers.start import (
-    start, gender_choice, handle_question, finish_questionnaire, 
-    cancel
-)
+
+# ЯВНЫЙ ИМПОРТ всех функций из handlers.start
+from handlers.start import start
+from handlers.start import gender_choice
+from handlers.start import handle_question
+from handlers.start import finish_questionnaire
+from handlers.start import cancel
+
 from handlers.user import (
     plan_command, progress_command, profile_command, 
     points_info_command, help_command,
@@ -53,7 +57,7 @@ from handlers.reminder import (
 )
 
 async def error_handler(update: Update, context: CallbackContext) -> None:
-    """Автоматически обрабатывает ошибки бота БЕЗ отправки в Telegram"""
+    """Автоматически обрабатывает ошибки бота БЕС отправки в Telegram"""
     error = context.error
     
     # Автоматически игнорируем самые частые и неважные ошибки
@@ -110,18 +114,20 @@ def main():
 
         # Автоматическая настройка обработчика диалога
         logger.info("🔄 Автоматическая регистрация обработчиков команд...")
+        
+        # СОЗДАЕМ ConversationHandler с явным указанием функций
         conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
+            entry_points=[CommandHandler('start', start)],  # ЯВНО используем start
             states={
                 GENDER: [
-                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)
+                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)  # ЯВНО используем gender_choice
                 ],
-                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
+                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],  # ЯВНО используем handle_question
                 ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
                 ADD_PLAN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_date)],
                 ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
             },
-            fallbacks=[CommandHandler('cancel', cancel)],
+            fallbacks=[CommandHandler('cancel', cancel)],  # ЯВНО используем cancel
         )
 
         application.add_handler(conv_handler)
