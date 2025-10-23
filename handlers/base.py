@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 async def handle_all_messages(update: Update, context: CallbackContext):
     """Обрабатывает все текстовые сообщения включая кнопки"""
+    # ПРОВЕРЯЕМ, НЕ НАХОДИТСЯ ЛИ ПОЛЬЗОВАТЕЛЬ В СОСТОЯНИИ CONVERSATIONHANDLER
+    # Если пользователь в процессе анкеты, пропускаем обработку
+    if context.user_data and any(key in context.user_data for key in ['current_question', 'assistant_gender', 'assistant_name']):
+        logger.info(f"⏩ Пропускаем сообщение в состоянии ConversationHandler: {update.message.text}")
+        return
+    
     user_id = update.effective_user.id
     message_text = update.message.text
 
@@ -26,44 +32,39 @@ async def handle_all_messages(update: Update, context: CallbackContext):
 
     # Обработка нажатий на кнопки
     button_handlers = {
-        '📊 прогресс': 'progress_command',
-        '👤 профиль': 'profile_command',
-        '📋 план на сегодня': 'plan_command',
-        '🔔 мои напоминания': 'my_reminders_command',
-        'ℹ️ помощь': 'help_command',
-        '🎮 очки опыта': 'points_info_command',
         '📊 Прогресс': 'progress_command',
-        '👤 Профиль': 'profile_command', 
+        '👤 Профиль': 'profile_command',
         '📋 План на сегодня': 'plan_command',
         '🔔 Мои напоминания': 'my_reminders_command',
         'ℹ️ Помощь': 'help_command',
         '🎮 Очки опыта': 'points_info_command'
     }
 
-    if message_text.lower() in [key.lower() for key in button_handlers.keys()]:
-        # Найдем правильный регистр для вызова функции
-        for key, handler_name in button_handlers.items():
-            if key.lower() == message_text.lower():
-                # Импортируем нужную функцию и вызываем
-                if handler_name == 'progress_command':
-                    from handlers.user import progress_command
-                    await progress_command(update, context)
-                elif handler_name == 'profile_command':
-                    from handlers.user import profile_command
-                    await profile_command(update, context)
-                elif handler_name == 'plan_command':
-                    from handlers.user import plan_command
-                    await plan_command(update, context)
-                elif handler_name == 'my_reminders_command':
-                    from handlers.reminder import my_reminders_command
-                    await my_reminders_command(update, context)
-                elif handler_name == 'help_command':
-                    from handlers.user import help_command
-                    await help_command(update, context)
-                elif handler_name == 'points_info_command':
-                    from handlers.user import points_info_command
-                    await points_info_command(update, context)
-                return
+    # Проверяем кнопки в независимости от регистра
+    normalized_text = message_text.lower().strip()
+    for button_text, handler_name in button_handlers.items():
+        if button_text.lower() == normalized_text:
+            logger.info(f"🔄 Обрабатываем нажатие кнопки: {button_text}")
+            
+            if handler_name == 'progress_command':
+                from handlers.user import progress_command
+                await progress_command(update, context)
+            elif handler_name == 'profile_command':
+                from handlers.user import profile_command
+                await profile_command(update, context)
+            elif handler_name == 'plan_command':
+                from handlers.user import plan_command
+                await plan_command(update, context)
+            elif handler_name == 'my_reminders_command':
+                from handlers.reminder import my_reminders_command
+                await my_reminders_command(update, context)
+            elif handler_name == 'help_command':
+                from handlers.user import help_command
+                await help_command(update, context)
+            elif handler_name == 'points_info_command':
+                from handlers.user import points_info_command
+                await points_info_command(update, context)
+            return
 
     # Если это не команда и не напоминание, отвечаем стандартным сообщением
     await update.message.reply_text(
