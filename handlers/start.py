@@ -64,7 +64,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Если анкета заполнена частично
     elif has_answers and questionnaire_state['current_question'] < len(QUESTIONS):
         keyboard = [
-            ['✅ Продолжить анкету', '🔄 Начать заново'],
+            ['✅ Продолжить анкету', '🔄 Начать зановo'],
             ['❌ Отменить']
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -106,6 +106,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
+    # ОДНО сообщение с приветствием и первым вопросом
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -113,7 +114,8 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
         f'Для составления плана, который будет работать именно для вас, мне нужно понять ваш ритм жизни и цели. '
         f'Это займет около 25-30 минут. Но в результате вы получите персональную стратегию на месяц, а не шаблонный список дел.\n\n'
-        f'Готовы начать?',
+        f'Готовы начать?\n\n'
+        f'{QUESTIONS[0]}',
         reply_markup=ReplyKeyboardRemove()
     )
     
@@ -130,13 +132,13 @@ async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_question'] = questionnaire_state['current_question']
         context.user_data['answers'] = questionnaire_state['answers']
         
+        # ОДНО сообщение с уведомлением и вопросом
         await update.message.reply_text(
-            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...",
+            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...\n\n"
+            f"{QUESTIONS[questionnaire_state['current_question']]}",
             reply_markup=ReplyKeyboardRemove()
         )
         
-        # Отправляем текущий вопрос
-        await update.message.reply_text(QUESTIONS[questionnaire_state['current_question']])
         return 1  # FIRST_QUESTION
         
     elif choice == '🔄 Начать заново':
@@ -156,12 +158,13 @@ async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_question'] = 0
         context.user_data['answers'] = {}
         
+        # ОДНО сообщение с уведомлением и первым вопросом
         await update.message.reply_text(
-            "🔄 Начинаем анкету заново...",
+            "🔄 Начинаем анкету заново...\n\n"
+            f"{QUESTIONS[0]}",
             reply_markup=ReplyKeyboardRemove()
         )
         
-        await update.message.reply_text(QUESTIONS[0])
         return 1  # FIRST_QUESTION
         
     else:
@@ -180,10 +183,14 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Переходим к следующему вопросу
     context.user_data['current_question'] += 1
+    
+    # Проверяем, есть ли еще вопросы
     if context.user_data['current_question'] < len(QUESTIONS):
+        # Отправляем СЛЕДУЮЩИЙ вопрос
         await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
         return 1  # FIRST_QUESTION
     else:
+        # Анкета завершена
         return await finish_questionnaire(update, context)
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -198,7 +205,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         'first_name': user.first_name,
         'last_name': user.last_name,
         'start_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'main_goal': context.user_data['answers'].get(1, ''),
+        'main_goal': context.user_data['answers'].get(0, ''),
         'last_activity': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'текущий_уровень': 'Новичок',
         'очки_опыта': '0',
@@ -226,7 +233,9 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     
     for i, question in enumerate(QUESTIONS):
         answer = context.user_data['answers'].get(i, '❌ Нет ответа')
-        questionnaire += f"❓ {i+1}. {question}:\n"
+        # Обрезаем длинный вопрос для читабельности
+        short_question = question[:100] + "..." if len(question) > 100 else question
+        questionnaire += f"❓ {i+1}. {short_question}:\n"
         questionnaire += f"💬 {answer}\n\n"
     
     # Отправляем админу
@@ -310,7 +319,7 @@ def restore_questionnaire_state(user_id: int) -> dict:
                 answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
             
             if answers:
-                # ВАЖНОЕ ИСПРАВЛЕНИЕ: Находим ПЕРВЫЙ неотвеченный вопрос
+                # НАЙДЕМ ПЕРВЫЙ НЕОТВЕЧЕННЫЙ ВОПРОС
                 current_question = 0
                 for i in range(len(QUESTIONS)):
                     if i not in answers:
