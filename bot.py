@@ -130,6 +130,7 @@ def main():
             fallbacks=[CommandHandler('cancel', cancel)],  # ЯВНО используем cancel
         )
 
+        # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ обработчиком
         application.add_handler(conv_handler)
         
         # Автоматическая регистрация команд для пользователей
