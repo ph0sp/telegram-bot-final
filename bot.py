@@ -15,7 +15,7 @@ from telegram.ext import (
 
 # Автоматические импорты из наших модулей
 from config import (
-    TOKEN, GENDER, FIRST_QUESTION, ADD_PLAN_USER, 
+    TOKEN, GENDER, READY_CONFIRMATION, QUESTIONNAIRE, ADD_PLAN_USER, 
     ADD_PLAN_DATE, ADD_PLAN_CONTENT, logger,
     POSTGRESQL_AVAILABLE, GOOGLE_SHEETS_AVAILABLE
 )
@@ -30,11 +30,10 @@ from database import (
 )
 
 # ЯВНЫЙ ИМПОРТ всех функций из handlers.start
-from handlers.start import start
-from handlers.start import gender_choice
-from handlers.start import handle_question
-from handlers.start import finish_questionnaire
-from handlers.start import cancel
+from handlers.start import (
+    start, gender_choice, handle_ready_confirmation, 
+    handle_question, finish_questionnaire, cancel
+)
 
 from handlers.user import (
     plan_command, progress_command, profile_command, 
@@ -115,19 +114,26 @@ def main():
         # Автоматическая настройка обработчика диалога
         logger.info("🔄 Автоматическая регистрация обработчиков команд...")
         
-        # СОЗДАЕМ ConversationHandler с явным указанием функций
+        # СОЗДАЕМ ConversationHandler с правильными состояниями
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],  # ЯВНО используем start
             states={
                 GENDER: [
-                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)  # ЯВНО используем gender_choice
+                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)
                 ],
-                FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],  # ЯВНО используем handle_question
+                READY_CONFIRMATION: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ready_confirmation)
+                ],
+                QUESTIONNAIRE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
+                ],
                 ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
                 ADD_PLAN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_date)],
                 ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
             },
-            fallbacks=[CommandHandler('cancel', cancel)],  # ЯВНО используем cancel
+            fallbacks=[CommandHandler('cancel', cancel)],
+            # Важно: позволяем перезапускать анкету
+            allow_reentry=True
         )
 
         # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ обработчиком
