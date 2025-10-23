@@ -13,11 +13,14 @@ from services.google_sheets import save_client_to_sheets
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /start"""
+    """Обработчик команды /start - начинает анкету заново каждый раз"""
     user = update.effective_user
     user_id = user.id
     
-    logger.info(f"🎯 КОМАНДА /start ВЫЗВАНА пользователем {user_id} ({user.first_name})")
+    logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
+    
+    # Полностью очищаем данные предыдущей анкеты
+    context.user_data.clear()
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
@@ -47,11 +50,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=reply_markup
     )
     
-    # Инициализируем данные анкеты
+    # Инициализируем данные для НОВОЙ анкеты
     context.user_data['current_question'] = -1  # -1 означает этап "Готовы начать?"
     context.user_data['answers'] = {}
+    context.user_data['questionnaire_started'] = True
     
-    logger.info(f"🔁 Возвращаем состояние GENDER ({GENDER}) для пользователя {user_id}")
+    logger.info(f"🔁 Начинаем новую анкету, возвращаем состояние GENDER ({GENDER})")
     
     return GENDER
 
@@ -93,7 +97,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Устанавливаем, что следующий шаг - подтверждение готовности
     context.user_data['current_question'] = -1
     
-    logger.info(f"🔁 Возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
+    logger.info(f"🔁 Ждем подтверждения готовности, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
     return READY_CONFIRMATION
 
 async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -101,11 +105,11 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
     user_id = update.effective_user.id
     answer_text = update.message.text
     
-    current_question = context.user_data['current_question']
-    logger.info(f"🔍 Обрабатываем подтверждение готовности: {answer_text[:50]}...")
+    logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
     
-    # Любой ответ считается согласием - начинаем анкету
-    logger.info(f"✅ Пользователь подтвердил начало анкеты: {answer_text}")
+    # Любой ответ считается согласием - начинаем анкету ЗАНОВО
+    context.user_data['current_question'] = 0
+    context.user_data['answers'] = {}  # Очищаем ответы на случай перезапуска
     
     # Отправляем вступительное сообщение и ПЕРВЫЙ вопрос ОДНИМ сообщением
     await update.message.reply_text(
@@ -116,10 +120,7 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         QUESTIONS[0]
     )
     
-    # Переходим к первому вопросу
-    context.user_data['current_question'] = 0
-    
-    logger.info(f"🔁 Переходим к вопросу 0, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
+    logger.info(f"🔁 Начинаем вопросы анкеты с вопроса 0, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
     return READY_CONFIRMATION
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -127,7 +128,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     answer_text = update.message.text
     
-    current_question = context.user_data['current_question']
+    current_question = context.user_data.get('current_question', 0)
     logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
     
     # Сохраняем ответ на текущий вопрос
@@ -146,12 +147,16 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return READY_CONFIRMATION
     else:
         # Анкета завершена
+        logger.info(f"✅ Анкета завершена для пользователя {user_id}")
         return await finish_questionnaire(update, context)
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершает анкету и отправляет данные"""
     user = update.effective_user
-    assistant_name = context.user_data['assistant_name']
+    user_id = user.id
+    assistant_name = context.user_data.get('assistant_name', 'Ассистент')
+    
+    logger.info(f"🎉 Завершаем анкету для пользователя {user_id}")
     
     # Сохраняем данные анкеты в Google Sheets
     user_data = {
@@ -242,10 +247,21 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
     
+    # Полностью очищаем данные анкеты после завершения
+    context.user_data.clear()
+    
+    logger.info(f"🧹 Данные анкеты очищены для пользователя {user_id}")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    """Отменяет текущий диалог"""
+    """Отменяет текущий диалог и очищает данные"""
+    user_id = update.effective_user.id
+    
+    # Очищаем данные анкеты
+    context.user_data.clear()
+    
+    logger.info(f"❌ Анкета отменена пользователем {user_id}")
+    
     await update.message.reply_text(
         '❌ Операция отменена.',
         reply_markup=ReplyKeyboardRemove()
