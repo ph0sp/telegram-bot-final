@@ -5,8 +5,8 @@ from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 
 from config import QUESTIONS, YOUR_CHAT_ID, logger
 from database import (
-    save_user_info, update_user_activity,
-    save_questionnaire_answer, get_db_connection
+    save_user_info, update_user_activity, check_user_registered,
+    save_questionnaire_answer, save_message, get_db_connection
 )
 from services.google_sheets import save_client_to_sheets
 
@@ -54,6 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
     gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
+    context.user_data['assistant_gender'] = gender
     
     if gender == 'Мужской':
         assistant_name = 'Антон'
@@ -62,13 +63,20 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     context.user_data['assistant_name'] = assistant_name
     
-    # Отправляем приветствие и ПЕРВЫЙ вопрос одним сообщением
+    # ОРИГИНАЛЬНОЕ приветствие (как было изначально)
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
-        f'{QUESTIONS[0]}',
+        f'Я составлю для вас сбалансированный план на месяц, а затем мы будем ежедневно отслеживать прогресс и ваше состояние, '
+        f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
+        f'Для составления плана, который будет работать именно для вас, мне нужно понять ваш ритм жизни и цели. '
+        f'Это займет около 25-30 минут. Но в результате вы получите персональную стратегию на месяц, а не шаблонный список дел.\n\n'
+        f'Готовы начать?',
         reply_markup=ReplyKeyboardRemove()
     )
+    
+    # Отдельным сообщением отправляем ПЕРВЫЙ вопрос
+    await update.message.reply_text(QUESTIONS[0])
     
     return 1  # FIRST_QUESTION
 
