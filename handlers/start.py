@@ -3,7 +3,7 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 
-from config import QUESTIONS, YOUR_CHAT_ID, logger
+from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, FIRST_QUESTION
 from database import (
     save_user_info, update_user_activity, check_user_registered,
     save_questionnaire_answer, save_message, get_db_connection
@@ -18,6 +18,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = user.id
     
     logger.info(f"🎯 КОМАНДА /start ВЫЗВАНА пользователем {user_id} ({user.first_name})")
+    
+    # ДОБАВЛЕНО: Проверка что функция действительно вызывается
+    logger.info(f"🔥 ФУНКЦИЯ START ВЫЗВАНА!")
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
@@ -51,7 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
-    logger.info(f"🔁 Возвращаем состояние GENDER для пользователя {user_id}")
+    logger.info(f"🔁 Возвращаем состояние GENDER ({GENDER}) для пользователя {user_id}")
     
     return GENDER  # 0
 
@@ -110,8 +113,11 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     answer_text = update.message.text
     
+    # ДОБАВЛЕНО: Диагностика текущего состояния
+    current_question = context.user_data.get('current_question', 0)
+    logger.info(f"🔍 ОБРАБОТКА ВОПРОСА: текущий_вопрос={current_question}, текст={answer_text[:50]}...")
+    
     # Сохраняем ответ
-    current_question = context.user_data['current_question']
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
     context.user_data['answers'][current_question] = answer_text
     
@@ -120,7 +126,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if context.user_data['current_question'] < len(QUESTIONS):
         # Отправляем следующий вопрос
         await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
-        return 1  # FIRST_QUESTION
+        return FIRST_QUESTION  # 1
     else:
         # Анкета завершена
         return await finish_questionnaire(update, context)
