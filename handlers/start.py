@@ -3,7 +3,7 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 
-from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, READY_CONFIRMATION
+from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, READY_CONFIRMATION, QUESTIONNAIRE
 from database import (
     save_user_info, update_user_activity, check_user_registered,
     save_questionnaire_answer, save_message, get_db_connection
