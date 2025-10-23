@@ -36,8 +36,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     except Exception as e:
         logger.error(f"❌ Ошибка очистки ответов: {e}")
     
-    # Начинаем новую анкету
-    keyboard = [['👨 Мужской', '👩 Женский']]
+    # НОВЫЕ КНОПКИ С ПРАВИЛЬНЫМИ СМАЙЛИКАМИ
+    keyboard = [['👨‍💼 Мужской', '👩‍💼 Женский']]  # ИЗМЕНЕНО ЗДЕСЬ
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     logger.info(f"📨 Отправляем выбор пола пользователю {user_id}")
@@ -58,18 +58,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
+    # ОБНОВЛЕННЫЕ СМАЙЛИКИ В РЕГУЛЯРНОМ ВЫРАЖЕНИИ
     gender = update.message.text.replace('🧌 ', '').replace('🧝🏽‍♀️ ', '')
     context.user_data['assistant_gender'] = gender
     
     if gender == 'Мужской':
         assistant_name = 'Антон'
-        greeting_emoji = '🧌'  # Смайлик для мужчины-ассистента
+        greeting_emoji = '🧌'
     else:
         assistant_name = 'Валерия'
-        greeting_emoji = '🧝🏽‍♀️'  # Смайлик для женщины-ассистента
+        greeting_emoji = '🧝🏽‍♀️'
     
     context.user_data['assistant_name'] = assistant_name
-    context.user_data['greeting_emoji'] = greeting_emoji  # Сохраняем для возможного использования позже
+    context.user_data['greeting_emoji'] = greeting_emoji
+    
+    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
+    logger.info(f"🎭 Выбран пол: {gender}, ассистент: {assistant_name}")
     
     # Полное приветствие с добавлением смайлика
     await update.message.reply_text(
@@ -83,8 +87,16 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Отправляем ПЕРВЫЙ вопрос отдельным сообщением
-    await update.message.reply_text(QUESTIONS[0])
+    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ПЕРЕД ОТПРАВКОЙ ВОПРОСА
+    logger.info(f"❓ Отправляем первый вопрос пользователю {update.effective_user.id}")
+    
+    # Проверяем, что QUESTIONS не пустой и есть первый вопрос
+    if QUESTIONS and len(QUESTIONS) > 0:
+        await update.message.reply_text(QUESTIONS[0])
+        logger.info(f"✅ Первый вопрос отправлен: {QUESTIONS[0][:50]}...")
+    else:
+        logger.error("❌ ОШИБКА: QUESTIONS пустой или не определен!")
+        await update.message.reply_text("Давайте начнем анкету!")
     
     return 1  # FIRST_QUESTION
 
