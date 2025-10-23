@@ -85,15 +85,7 @@ else:
 
 # ========== СОСТОЯНИЯ ДИАЛОГА ==========
 
-# Простые числовые константы
-GENDER = 0
-FIRST_QUESTION = 1
-ADD_PLAN_USER = 2
-ADD_PLAN_DATE = 3
-ADD_PLAN_CONTENT = 4
-SELECT_TEMPLATE = 5
-SELECT_USER_FOR_TEMPLATE = 6
-SELECT_DATE_FOR_TEMPLATE = 7
+GENDER, FIRST_QUESTION = range(2)
 
 # ========== КОНСТАНТЫ ДЛЯ ИНДЕКСОВ ПЛАНОВ ==========
 
