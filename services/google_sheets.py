@@ -4,8 +4,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+import os
 
-from config import GOOGLE_CREDENTIALS_JSON, GOOGLE_SHEETS_ID, logger
+from config import GOOGLE_SHEETS_ID, logger
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +14,44 @@ logger = logging.getLogger(__name__)
 google_sheet = None
 
 def init_google_sheets():
-    """Инициализация Google Sheets с новой структурой"""
+    """Инициализация Google Sheets с исправленной загрузкой credentials"""
     global google_sheet
     
-    # ИСПРАВЛЕНИЕ: Заменил GOOGLE_SHEETS_AVAILABLE на проверку наличия credentials
-    if not GOOGLE_CREDENTIALS_JSON or not GOOGLE_SHEETS_ID:
-        logger.warning("⚠️ Google Sheets credentials не настроены")
-        return None
-    
     try:
-        # Парсим JSON credentials
-        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        # Пытаемся загрузить credentials разными способами
+        creds_dict = None
+        
+        # Способ 1: Из переменной окружения
+        from config import GOOGLE_CREDENTIALS_JSON
+        if GOOGLE_CREDENTIALS_JSON:
+            try:
+                # Проверяем, является ли уже словарем
+                if isinstance(GOOGLE_CREDENTIALS_JSON, dict):
+                    creds_dict = GOOGLE_CREDENTIALS_JSON
+                    logger.info("✅ Credentials загружены из переменной окружения (уже dict)")
+                else:
+                    # Пытаемся распарсить как JSON строку
+                    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+                    logger.info("✅ Credentials загружены из переменной окружения (распарсена строка)")
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"⚠️ Не удалось распарсить GOOGLE_CREDENTIALS_JSON: {e}")
+        
+        # Способ 2: Из файла (резервный вариант)
+        if not creds_dict and os.path.exists('/home/ubuntu/telegram-bot/creds.json'):
+            try:
+                with open('/home/ubuntu/telegram-bot/creds.json', 'r') as f:
+                    creds_dict = json.load(f)
+                logger.info("✅ Credentials загружены из файла creds.json")
+            except Exception as e:
+                logger.error(f"❌ Ошибка загрузки credentials из файла: {e}")
+        
+        if not creds_dict:
+            logger.error("❌ Не удалось загрузить credentials ни из переменной окружения, ни из файла")
+            return None
+        
+        if not GOOGLE_SHEETS_ID:
+            logger.error("❌ GOOGLE_SHEETS_ID не настроен")
+            return None
         
         # Настраиваем scope
         scope = [
