@@ -75,8 +75,11 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Отдельным сообщением отправляем ПЕРВЫЙ вопрос
-    await update.message.reply_text(QUESTIONS[0])
+    # Ждем немного и отправляем ПЕРВЫЙ вопрос отдельным сообщением
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=QUESTIONS[0]
+    )
     
     return 1  # FIRST_QUESTION
 
@@ -85,6 +88,8 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     answer_text = update.message.text
     current_question = context.user_data['current_question']
+    
+    logger.info(f"📝 Получен ответ на вопрос {current_question}: {answer_text[:50]}...")
     
     # Сохраняем ответ
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
@@ -95,11 +100,18 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # Проверяем, есть ли еще вопросы
     if context.user_data['current_question'] < len(QUESTIONS):
-        # Отправляем СЛЕДУЮЩИЙ вопрос
-        await update.message.reply_text(QUESTIONS[context.user_data['current_question']])
+        # Ждем немного перед отправкой следующего вопроса
+        next_question = context.user_data['current_question']
+        logger.info(f"➡️ Отправляем вопрос {next_question}")
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=QUESTIONS[next_question]
+        )
         return 1  # FIRST_QUESTION
     else:
         # Анкета завершена
+        logger.info("✅ Анкета завершена")
         return await finish_questionnaire(update, context)
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
