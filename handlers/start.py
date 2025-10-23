@@ -25,9 +25,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     questionnaire_state = restore_questionnaire_state(user_id)
     
     has_answers = False
-    conn = get_db_connection()
-    if conn:
-        try:
+    try:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = %s", 
@@ -35,11 +34,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
             result = cursor.fetchone()
             has_answers = result[0] > 0 if result else False
-        except Exception as e:
-            logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
-            has_answers = False
-        finally:
-            conn.close()
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
+        has_answers = False
     
     if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
         # Анкета уже полностью заполнена
@@ -251,19 +248,16 @@ async def handle_continue_choice(update: Update, context: CallbackContext) -> in
         
     elif choice == '🔄 Начать заново':
         # Очищаем старые ответы
-        conn = get_db_connection()
-        if conn:
-            try:
+        try:
+            with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "DELETE FROM questionnaire_answers WHERE user_id = %s", 
                     (update.effective_user.id,)
                 )
                 conn.commit()
-            except Exception as e:
-                logger.error(f"❌ Ошибка удаления ответов: {e}")
-            finally:
-                conn.close()
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления ответов: {e}")
         
         # Начинаем заново
         context.user_data['current_question'] = 0
@@ -292,42 +286,36 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 # ВОССТАНОВИЛ локальную функцию restore_questionnaire_state
 def restore_questionnaire_state(user_id: int) -> dict:
     """Восстанавливает состояние анкеты пользователя из PostgreSQL"""
-    conn = get_db_connection()
-    if not conn:
-        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-        
     try:
-        cursor = conn.cursor()
-        
-        # Получаем все ответы пользователя
-        cursor.execute('''
-            SELECT question_number, answer_text 
-            FROM questionnaire_answers 
-            WHERE user_id = %s 
-            ORDER BY question_number
-        ''', (user_id,))
-        
-        answers_data = cursor.fetchall()
-        answers = {}
-        for row in answers_data:
-            answers[row['question_number']] = row['answer_text']
-        
-        if answers:
-            # Определяем текущий вопрос
-            last_question = max(answers.keys())
-            current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
             
-            return {
-                'current_question': current_question,
-                'answers': answers,
-                'has_previous_answers': True
-            }
-        
-        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-        
+            # Получаем все ответы пользователя
+            cursor.execute('''
+                SELECT question_number, answer_text 
+                FROM questionnaire_answers 
+                WHERE user_id = %s 
+                ORDER BY question_number
+            ''', (user_id,))
+            
+            answers_data = cursor.fetchall()
+            answers = {}
+            for row in answers_data:
+                answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
+            
+            if answers:
+                # Определяем текущий вопрос
+                last_question = max(answers.keys())
+                current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
+                
+                return {
+                    'current_question': current_question,
+                    'answers': answers,
+                    'has_previous_answers': True
+                }
+            
+            return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+            
     except Exception as e:
         logger.error(f"❌ Ошибка БД при восстановлении анкеты {user_id}: {e}")
         return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-    finally:
-        if conn:
-            conn.close()
