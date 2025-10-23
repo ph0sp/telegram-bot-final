@@ -37,7 +37,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"❌ Ошибка очистки ответов: {e}")
     
     # НОВЫЕ КНОПКИ С ПРАВИЛЬНЫМИ СМАЙЛИКАМИ
-    keyboard = [['👨‍💼 Мужской', '👩‍💼 Женский']]  # ИЗМЕНЕНО ЗДЕСЬ
+    keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']] 
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     logger.info(f"📨 Отправляем выбор пола пользователю {user_id}")
