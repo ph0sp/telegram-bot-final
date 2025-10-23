@@ -156,9 +156,11 @@ def main():
         application.add_handler(CommandHandler("admin_stats", admin_stats))
         application.add_handler(CommandHandler("admin_users", admin_users))
         
-        # Автоматическая регистрация обработчиков кнопок и сообщений
+        # Автоматическая регистрация обработчиков кнопок
         application.add_handler(CallbackQueryHandler(button_callback))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
+        
+        # Обработчик всех сообщений регистрируем ПОСЛЕДНИМ с группой 1
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
         
         # Автоматическая настройка системы напоминаний
         logger.info("🔄 Автоматическая настройка системы напоминаний...")
