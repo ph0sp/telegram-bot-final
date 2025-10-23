@@ -5,12 +5,11 @@ from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 
 from config import QUESTIONS, YOUR_CHAT_ID, logger
 from database import (
-    save_user_info, update_user_activity, check_user_registered,
-    save_questionnaire_answer, save_message, get_db_connection
+    save_user_info, update_user_activity,
+    save_questionnaire_answer, get_db_connection
 )
 from services.google_sheets import save_client_to_sheets
 
-# ВОССТАНОВИЛ логгер
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -30,22 +29,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                f"current_question={questionnaire_state['current_question']}, "
                f"has_answers={questionnaire_state['has_previous_answers']}")
     
-    has_answers = False
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM questionnaire_answers WHERE user_id = %s", 
-                (user_id,)
-            )
-            result = cursor.fetchone()
-            has_answers = result[0] > 0 if result else False
-    except Exception as e:
-        logger.error(f"❌ Ошибка проверки анкеты пользователя {user_id}: {e}")
-        has_answers = False
-    
     # Если анкета полностью заполнена
-    if has_answers and questionnaire_state['current_question'] >= len(QUESTIONS):
+    if questionnaire_state['current_question'] >= len(QUESTIONS):
         keyboard = [
             ['📊 Прогресс', '👤 Профиль'],
             ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -62,9 +47,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
         
     # Если анкета заполнена частично
-    elif has_answers and questionnaire_state['current_question'] < len(QUESTIONS):
+    elif questionnaire_state['has_previous_answers']:
         keyboard = [
-            ['✅ Продолжить анкету', '🔄 Начать зановo'],
+            ['✅ Продолжить анкету', '🔄 Начать заново'],
             ['❌ Отменить']
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -106,7 +91,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
-    # ОДНО сообщение с приветствием и первым вопросом
+    # Отправляем приветствие одним сообщением
     await update.message.reply_text(
         f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -114,11 +99,12 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
         f'Для составления плана, который будет работать именно для вас, мне нужно понять ваш ритм жизни и цели. '
         f'Это займет около 25-30 минут. Но в результате вы получите персональную стратегию на месяц, а не шаблонный список дел.\n\n'
-        f'Готовы начать?\n\n'
-        f'{QUESTIONS[0]}',
+        f'Готовы начать?',
         reply_markup=ReplyKeyboardRemove()
     )
     
+    # Отправляем ПЕРВЫЙ вопрос отдельным сообщением
+    await update.message.reply_text(QUESTIONS[0])
     return 1  # FIRST_QUESTION
 
 async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -131,11 +117,11 @@ async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TY
         # Восстанавливаем данные из базы
         context.user_data['current_question'] = questionnaire_state['current_question']
         context.user_data['answers'] = questionnaire_state['answers']
+        context.user_data['assistant_name'] = 'Антон'  # По умолчанию
         
-        # ОДНО сообщение с уведомлением и вопросом
+        # Отправляем ТОЛЬКО текущий вопрос
         await update.message.reply_text(
-            f"🔄 Продолжаем анкету с вопроса {questionnaire_state['current_question'] + 1}...\n\n"
-            f"{QUESTIONS[questionnaire_state['current_question']]}",
+            QUESTIONS[questionnaire_state['current_question']],
             reply_markup=ReplyKeyboardRemove()
         )
         
@@ -158,10 +144,9 @@ async def handle_restore_choice(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_question'] = 0
         context.user_data['answers'] = {}
         
-        # ОДНО сообщение с уведомлением и первым вопросом
+        # Отправляем ПЕРВЫЙ вопрос
         await update.message.reply_text(
-            "🔄 Начинаем анкету заново...\n\n"
-            f"{QUESTIONS[0]}",
+            QUESTIONS[0],
             reply_markup=ReplyKeyboardRemove()
         )
         
@@ -196,7 +181,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершает анкету и отправляет данные"""
     user = update.effective_user
-    assistant_name = context.user_data['assistant_name']
+    assistant_name = context.user_data.get('assistant_name', 'Ассистент')
     
     # Сохраняем данные анкеты в Google Sheets
     user_data = {
@@ -231,10 +216,9 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     
     questionnaire += "📝 Ответы на вопросы:\n\n"
     
-    for i, question in enumerate(QUESTIONS):
+    for i in range(len(QUESTIONS)):
         answer = context.user_data['answers'].get(i, '❌ Нет ответа')
-        # Обрезаем длинный вопрос для читабельности
-        short_question = question[:100] + "..." if len(question) > 100 else question
+        short_question = QUESTIONS[i][:100] + "..." if len(QUESTIONS[i]) > 100 else QUESTIONS[i]
         questionnaire += f"❓ {i+1}. {short_question}:\n"
         questionnaire += f"💬 {answer}\n\n"
     
@@ -319,7 +303,7 @@ def restore_questionnaire_state(user_id: int) -> dict:
                 answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
             
             if answers:
-                # НАЙДЕМ ПЕРВЫЙ НЕОТВЕЧЕННЫЙ ВОПРОС
+                # Находим ПЕРВЫЙ неотвеченный вопрос
                 current_question = 0
                 for i in range(len(QUESTIONS)):
                     if i not in answers:
