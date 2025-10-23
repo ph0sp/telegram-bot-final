@@ -15,7 +15,7 @@ from telegram.ext import (
 
 # Автоматические импорты из наших модулей
 from config import (
-    TOKEN, GENDER, FIRST_QUESTION, ADD_PLAN_USER, 
+    TOKEN, GENDER, FIRST_QUESTION, RESTORE_CHOICE, ADD_PLAN_USER, 
     ADD_PLAN_DATE, ADD_PLAN_CONTENT, logger,
     POSTGRESQL_AVAILABLE, GOOGLE_SHEETS_AVAILABLE
 )
@@ -31,7 +31,7 @@ from database import (
 )
 from handlers.start import (
     start, gender_choice, handle_question, finish_questionnaire, 
-    handle_continue_choice, cancel
+    handle_restore_choice, cancel
 )
 from handlers.user import (
     plan_command, progress_command, profile_command, 
@@ -115,10 +115,10 @@ def main():
             entry_points=[CommandHandler('start', start)],
             states={
                 GENDER: [
-                    MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice),
-                    MessageHandler(filters.Regex('^(✅ Продолжить анкету|🔄 Начать заново|❌ Отменить)$'), handle_continue_choice)
+                    MessageHandler(filters.Regex('^(👨 Мужской|👩 Женский|Мужской|Женский)$'), gender_choice)
                 ],
                 FIRST_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)],
+                RESTORE_CHOICE: [MessageHandler(filters.Regex('^(✅ Продолжить анкету|🔄 Начать заново|❌ Отменить)$'), handle_restore_choice)],
                 ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
                 ADD_PLAN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_date)],
                 ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
