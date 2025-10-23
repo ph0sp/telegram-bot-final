@@ -86,6 +86,8 @@ else:
 # ========== СОСТОЯНИЯ ДИАЛОГА ==========
 
 GENDER, FIRST_QUESTION = range(2)
+ADD_PLAN_USER, ADD_PLAN_DATE, ADD_PLAN_CONTENT = range(3, 6)
+SELECT_TEMPLATE, SELECT_USER_FOR_TEMPLATE, SELECT_DATE_FOR_TEMPLATE = range(6, 9)
 
 # ========== КОНСТАНТЫ ДЛЯ ИНДЕКСОВ ПЛАНОВ ==========
 
