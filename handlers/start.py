@@ -17,7 +17,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_id = user.id
     
-    logger.info(f"🔍 Пользователь {user_id} запустил /start")
+    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
+    logger.info(f"🎯 КОМАНДА /start ВЫЗВАНА пользователем {user_id} ({user.first_name})")
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
@@ -39,6 +40,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [['👨 Мужской', '👩 Женский']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
+    logger.info(f"📨 Отправляем выбор пола пользователю {user_id}")
+    
     await update.message.reply_text(
         '👋 Добро пожаловать! Я ваш персональный ассистент по продуктивности.\n\n'
         'Для начала выберите пол ассистента:',
@@ -49,11 +52,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
+    logger.info(f"🔁 Возвращаем состояние GENDER для пользователя {user_id}")
+    
     return 0  # GENDER
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
-    gender = update.message.text.replace('👨 ', '').replace('👩 ', '')
+    gender = update.message.text.replace('🧌 ', '').replace('🧝🏽‍♀️ ', '')
     context.user_data['assistant_gender'] = gender
     
     if gender == 'Мужской':
@@ -65,7 +70,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     # Полное приветствие как было изначально
     await update.message.reply_text(
-        f'🧌 Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
+        f'Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
         f'Я составлю для вас сбалансированный план на месяц, а затем мы будем ежедневно отслеживать прогресс и ваше состояние, '
         f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
