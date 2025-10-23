@@ -17,7 +17,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_id = user.id
     
-    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
     logger.info(f"🎯 КОМАНДА /start ВЫЗВАНА пользователем {user_id} ({user.first_name})")
     
     save_user_info(user_id, user.username, user.first_name, user.last_name)
@@ -36,8 +35,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     except Exception as e:
         logger.error(f"❌ Ошибка очистки ответов: {e}")
     
-    # НОВЫЕ КНОПКИ С ПРАВИЛЬНЫМИ СМАЙЛИКАМИ
-    keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']] 
+    # КНОПКИ С ВАШИМИ СМАЙЛИКАМИ
+    keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]  # ИСПОЛЬЗУЕМ ВАШИ СМАЙЛИКИ
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     logger.info(f"📨 Отправляем выбор пола пользователю {user_id}")
@@ -54,28 +53,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     logger.info(f"🔁 Возвращаем состояние GENDER для пользователя {user_id}")
     
-    return 0  # GENDER
+    return GENDER  # 0
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
-    # ОБНОВЛЕННЫЕ СМАЙЛИКИ В РЕГУЛЯРНОМ ВЫРАЖЕНИИ
-    gender = update.message.text.replace('🧌 ', '').replace('🧝🏽‍♀️ ', '')
-    context.user_data['assistant_gender'] = gender
+    user_id = update.effective_user.id
+    user_text = update.message.text
+    
+    logger.info(f"🎭 Пользователь {user_id} выбрал: {user_text}")
+    
+    # Обрабатываем ВАШИ смайлики
+    gender = user_text.replace('🧌 ', '').replace('🧝🏽‍♀️ ', '')
     
     if gender == 'Мужской':
         assistant_name = 'Антон'
-        greeting_emoji = '🧌'
+        greeting_emoji = '🧌'  # Используем тот же смайлик что и на кнопке
     else:
         assistant_name = 'Валерия'
-        greeting_emoji = '🧝🏽‍♀️'
+        greeting_emoji = '🧝🏽‍♀️'  # Используем тот же смайлик что и на кнопке
     
+    context.user_data['assistant_gender'] = gender
     context.user_data['assistant_name'] = assistant_name
     context.user_data['greeting_emoji'] = greeting_emoji
     
-    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
-    logger.info(f"🎭 Выбран пол: {gender}, ассистент: {assistant_name}")
+    logger.info(f"✅ Выбран пол: {gender}, ассистент: {assistant_name}")
     
-    # Полное приветствие с добавлением смайлика
+    # Приветствие с вашими смайликами
     await update.message.reply_text(
         f'{greeting_emoji} Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -87,18 +90,20 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # ДОБАВЛЕНО ЛОГИРОВАНИЕ ПЕРЕД ОТПРАВКОЙ ВОПРОСА
-    logger.info(f"❓ Отправляем первый вопрос пользователю {update.effective_user.id}")
+    # Проверяем что QUESTIONS существует
+    if not QUESTIONS:
+        logger.error("❌ CRITICAL: QUESTIONS is empty or not defined!")
+        await update.message.reply_text("❌ Произошла ошибка. Попробуйте позже.")
+        return ConversationHandler.END
     
-    # Проверяем, что QUESTIONS не пустой и есть первый вопрос
-    if QUESTIONS and len(QUESTIONS) > 0:
-        await update.message.reply_text(QUESTIONS[0])
-        logger.info(f"✅ Первый вопрос отправлен: {QUESTIONS[0][:50]}...")
-    else:
-        logger.error("❌ ОШИБКА: QUESTIONS пустой или не определен!")
-        await update.message.reply_text("Давайте начнем анкету!")
+    logger.info(f"❓ Всего вопросов: {len(QUESTIONS)}, отправляем первый вопрос")
+    logger.info(f"📝 Первый вопрос: {QUESTIONS[0]}")
     
-    return 1  # FIRST_QUESTION
+    # Отправляем ПЕРВЫЙ вопрос
+    await update.message.reply_text(QUESTIONS[0])
+    
+    logger.info(f"🔁 Возвращаем состояние FIRST_QUESTION: {FIRST_QUESTION}")
+    return FIRST_QUESTION  # 1
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
