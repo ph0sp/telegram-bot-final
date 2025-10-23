@@ -18,11 +18,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_id = user.id
     
+    logger.info(f"🔍 Пользователь {user_id} запустил /start")
+    
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
     # Восстанавливаем состояние анкеты
     questionnaire_state = restore_questionnaire_state(user_id)
+    
+    logger.info(f"📋 Состояние анкеты для {user_id}: "
+               f"current_question={questionnaire_state['current_question']}, "
+               f"has_answers={questionnaire_state['has_previous_answers']}")
     
     has_answers = False
     try:
@@ -304,9 +310,18 @@ def restore_questionnaire_state(user_id: int) -> dict:
                 answers[row[0]] = row[1]  # row[0] - question_number, row[1] - answer_text
             
             if answers:
-                # Определяем текущий вопрос - следующий после последнего отвеченного
-                last_question = max(answers.keys())
-                current_question = last_question + 1
+                # ВАЖНОЕ ИСПРАВЛЕНИЕ: Находим ПЕРВЫЙ неотвеченный вопрос
+                current_question = 0
+                for i in range(len(QUESTIONS)):
+                    if i not in answers:
+                        current_question = i
+                        break
+                else:
+                    # Все вопросы отвечены
+                    current_question = len(QUESTIONS)
+                
+                logger.info(f"📊 Восстановлено состояние анкеты для {user_id}: "
+                           f"отвечено {len(answers)} вопросов, текущий вопрос: {current_question}")
                 
                 return {
                     'current_question': current_question,
