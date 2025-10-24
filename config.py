@@ -484,7 +484,7 @@ def validate_config():
             return False
     
     # Проверка количества вопросов анкеты
-    expected_questions_count = 39  # Актуальное количество вопросов
+    expected_questions_count = 35  # Актуальное количество вопросов
     if len(QUESTIONS) != expected_questions_count:
         logger.error(f"❌ Неверное количество вопросов: {len(QUESTIONS)}, ожидалось: {expected_questions_count}")
         return False
