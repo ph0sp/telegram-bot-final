@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
-    if not check_user_registered(user_id):
+    if not await check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
@@ -74,15 +74,15 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает персонализированный прогресс"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
-    if not check_user_registered(user_id):
+    if not await check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    if not has_sufficient_data(user_id):
+    if not await has_sufficient_data(user_id):
         # Показываем сообщение о недостатке данных
-        usage_days = get_user_usage_days(user_id)
+        usage_days = await get_user_usage_days(user_id)
         
         await update.message.reply_text(
             f"📊 ВАШ ПРОГРЕСС ФОРМИРУЕТСЯ!\n\n"
@@ -98,142 +98,122 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Уже через 3 дня появится персональная статистика."
         )
     else:
-        # Получаем данные за последние 7 дней
-        conn = get_db_connection()
-        if not conn:
-            await update.message.reply_text("❌ Ошибка подключения к базе данных")
-            return
-            
+        # Получаем данные за последние 7 дней с использованием асинхронной БД
         try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_days,
-                    AVG(tasks_completed) as avg_tasks,
-                    AVG(mood) as avg_mood,
-                    AVG(energy) as avg_energy,
-                    AVG(water_intake) as avg_water,
-                    COUNT(DISTINCT progress_date) as active_days
-                FROM user_progress 
-                WHERE user_id = %s AND progress_date >= CURRENT_DATE - INTERVAL '7 days'
-            """, (user_id,))
-            
-            result = cursor.fetchone()
-            
-            total_days = result['total_days'] or 0
-            avg_tasks = result['avg_tasks'] or 0
-            avg_mood = result['avg_mood'] or 0
-            avg_energy = result['avg_energy'] or 0
-            avg_water = result['avg_water'] or 0
-            active_days = result['active_days'] or 0
+            async with get_db_connection() as conn:
+                result = await conn.fetchrow("""
+                    SELECT 
+                        COUNT(*) as total_days,
+                        AVG(tasks_completed) as avg_tasks,
+                        AVG(mood) as avg_mood,
+                        AVG(energy) as avg_energy,
+                        AVG(water_intake) as avg_water,
+                        COUNT(DISTINCT progress_date) as active_days
+                    FROM user_progress 
+                    WHERE user_id = $1 AND progress_date >= CURRENT_DATE - INTERVAL '7 days'
+                """, user_id)
+                
+                total_days = result['total_days'] if result['total_days'] else 0
+                avg_tasks = float(result['avg_tasks']) if result['avg_tasks'] else 0
+                avg_mood = float(result['avg_mood']) if result['avg_mood'] else 0
+                avg_energy = float(result['avg_energy']) if result['avg_energy'] else 0
+                avg_water = float(result['avg_water']) if result['avg_water'] else 0
+                active_days = result['active_days'] if result['active_days'] else 0
 
-            # Рассчитываем проценты и динамику
-            tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
-            mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
-            energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
-            water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
-            activity_str = f"{active_days}/7 дней"
+                # Рассчитываем проценты и динамику
+                tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
+                mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
+                energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
+                water_str = f"{avg_water:.1f} стаканов/день" if avg_water else "0 стаканов/день"
+                activity_str = f"{active_days}/7 дней"
 
-            # Динамика
-            mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
-            energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
-            productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
+                # Динамика
+                mood_dynamics = "↗ улучшается" if avg_mood and avg_mood > 6 else "→ стабильно"
+                energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
+                productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
-            # Получаем дополнительную информацию для профиля
-            usage_days = get_user_usage_days(user_id)
-            level_info = get_user_level_info(user_id)
+                # Получаем дополнительную информацию для профиля
+                usage_days = await get_user_usage_days(user_id)
+                level_info = await get_user_level_info(user_id)
 
-            # Персональный совет
-            advice = "Продолжайте в том же духе! Вы на правильном пути."
-            if avg_water and avg_water < 6:
-                advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
-            elif avg_mood and avg_mood < 6:
-                advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
+                # Персональный совет
+                advice = "Продолжайте в том же духе! Вы на правильном пути."
+                if avg_water and avg_water < 6:
+                    advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
+                elif avg_mood and avg_mood < 6:
+                    advice = "Попробуйте добавить короткие перерывы для отдыха - это улучшит настроение!"
 
-            await update.message.reply_text(
-                f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
-                f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-                f"✅ Выполнено задач: {tasks_completed}\n"
-                f"😊 Среднее настроение: {mood_str}\n"
-                f"⚡ Уровень энергии: {energy_str}\n"
-                f"💧 Вода в среднем: {water_str}\n"
-                f"🏃 Активность: {activity_str}\n\n"
-                f"📈 ДИНАМИКА:\n"
-                f"• Настроение: {mood_dynamics}\n"
-                f"• Энергия: {energy_dynamics}\n"
-                f"• Продуктивность: {productivity_dynamics}\n\n"
-                f"🎯 СОВЕТ: {advice}"
-            )
-            
+                await update.message.reply_text(
+                    f"📊 ВАШ ПЕРСОНАЛЬНЫЙ ПРОГРЕСС\n\n"
+                    f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+                    f"✅ Выполнено задач: {tasks_completed}\n"
+                    f"😊 Среднее настроение: {mood_str}\n"
+                    f"⚡ Уровень энергии: {energy_str}\n"
+                    f"💧 Вода в среднем: {water_str}\n"
+                    f"🏃 Активность: {activity_str}\n\n"
+                    f"📈 ДИНАМИКА:\n"
+                    f"• Настроение: {mood_dynamics}\n"
+                    f"• Энергия: {energy_dynamics}\n"
+                    f"• Продуктивность: {productivity_dynamics}\n\n"
+                    f"🎯 СОВЕТ: {advice}"
+                )
+                
         except Exception as e:
             logger.error(f"❌ Ошибка получения прогресса для {user_id}: {e}")
             await update.message.reply_text("❌ Ошибка при получении статистики. Попробуйте позже.")
-        finally:
-            conn.close()
 
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает профиль пользователя"""
     user = update.effective_user
     user_id = user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
-    if not check_user_registered(user_id):
+    if not await check_user_registered(user_id):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
     # Получаем данные для профиля
-    main_goal = get_user_main_goal(user_id)
-    usage_days = get_user_usage_days(user_id)
-    level_info = get_user_level_info(user_id)
-    favorite_ritual = get_favorite_ritual(user_id)
+    main_goal = await get_user_main_goal(user_id)
+    usage_days = await get_user_usage_days(user_id)
+    level_info = await get_user_level_info(user_id)
+    favorite_ritual = await get_favorite_ritual(user_id)
     
-    # Получаем статистику по планам
-    conn = get_db_connection()
-    if not conn:
-        await update.message.reply_text("❌ Ошибка подключения к базе данных")
-        return
-        
+    # Получаем статистику по планам с использованием асинхронной БД
     try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT COUNT(*) FROM user_plans WHERE user_id = %s", 
-            (user_id,)
-        )
-        total_plans_result = cursor.fetchone()
-        total_plans = total_plans_result['count'] if total_plans_result else 0
+        async with get_db_connection() as conn:
+            total_plans = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_plans WHERE user_id = $1", 
+                user_id
+            ) or 0
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM user_plans WHERE user_id = %s AND status = 'completed'", 
-            (user_id,)
-        )
-        completed_plans_result = cursor.fetchone()
-        completed_plans = completed_plans_result['count'] if completed_plans_result else 0
+            completed_plans = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_plans WHERE user_id = $1 AND status = 'completed'", 
+                user_id
+            ) or 0
 
-        # Вычисляем процент выполнения планов
-        plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
-        
-        # Формируем профиль
-        profile_text = (
-            f"👤 ВАШ ПРОФИЛЬ\n\n"
-            f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
-            f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
-            f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
-            f"🏆 ДОСТИЖЕНИЯ:\n"
-            f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
-            f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
-            f"• Любимый ритуал: {favorite_ritual}\n\n"
-            f"🎮 УРОВЕНЬ: {level_info['level']}\n"
-            f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
-            f"💡 РЕКОМЕНДАЦИИ:\n"
-            f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
-        )
-        
-        await update.message.reply_text(profile_text)
+            # Вычисляем процент выполнения планов
+            plans_percentage = (completed_plans / total_plans * 100) if total_plans > 0 else 0
+            
+            # Формируем профиль
+            profile_text = (
+                f"👤 ВАШ ПРОФИЛЬ\n\n"
+                f"📅 День {usage_days['current_day']} • Всего дней: {usage_days['days_since_registration']} • Серия: {usage_days['current_streak']}\n\n"
+                f"🎯 ТЕКУЩАЯ ЦЕЛЬ: {main_goal}\n"
+                f"📊 ВЫПОЛНЕНО: {plans_percentage:.1f}% на пути к цели\n\n"
+                f"🏆 ДОСТИЖЕНИЯ:\n"
+                f"• Выполнено планов: {completed_plans} из {total_plans} ({plans_percentage:.1f}%)\n"
+                f"• Максимальная регулярность: {usage_days['current_streak']} дней\n"
+                f"• Любимый ритуал: {favorite_ritual}\n\n"
+                f"🎮 УРОВЕНЬ: {level_info['level']}\n"
+                f"⭐ ОЧКОВ: {level_info['points']} из {level_info['next_level_points']} до следующего уровня\n\n"
+                f"💡 РЕКОМЕНДАЦИИ:\n"
+                f"Продолжайте ежедневно отслеживать прогресс для лучших результатов!"
+            )
+            
+            await update.message.reply_text(profile_text)
     except Exception as e:
         logger.error(f"❌ Ошибка получения профиля для {user_id}: {e}")
         await update.message.reply_text("❌ Ошибка при получении профиля. Попробуйте позже.")
-    finally:
-        conn.close()
 
 async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Объясняет систему очков"""
@@ -260,7 +240,7 @@ async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
     help_text = (
         "ℹ️ Справка по командам:\n\n"
@@ -282,7 +262,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 Напоминания:\n"
         "/remind_me <время> <текст> - Разовое напоминание\n"
         "/regular_remind <время> <дни> <текст> - Регулярное напоминание\n"
-        "/my_reminders - Показать активные напоминания\n"
+        "/my_reminders - Показать активные напоминаний\n"
         "/delete_remind <id> - Удалить напоминание\n\n"
         
         "💡 Также вы можете писать напоминания естественным языком:\n"
@@ -298,7 +278,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def done_command(update: Update, context: CallbackContext):
     """Отмечает выполнение задачи"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -327,7 +307,7 @@ async def done_command(update: Update, context: CallbackContext):
 async def mood_command(update: Update, context: CallbackContext):
     """Оценка настроения"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -348,7 +328,7 @@ async def mood_command(update: Update, context: CallbackContext):
             'mood': mood,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        save_progress_to_db(user_id, progress_data)
+        await save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
@@ -379,7 +359,7 @@ async def mood_command(update: Update, context: CallbackContext):
 async def energy_command(update: Update, context: CallbackContext):
     """Оценка уровня энергии"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -400,7 +380,7 @@ async def energy_command(update: Update, context: CallbackContext):
             'energy': energy,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        save_progress_to_db(user_id, progress_data)
+        await save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
@@ -431,7 +411,7 @@ async def energy_command(update: Update, context: CallbackContext):
 async def water_command(update: Update, context: CallbackContext):
     """Отслеживание водного баланса"""
     user_id = update.effective_user.id
-    update_user_activity(user_id)
+    await update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -450,7 +430,7 @@ async def water_command(update: Update, context: CallbackContext):
             'water_intake': water,
             'progress_date': datetime.now().strftime("%Y-%m-%d")
         }
-        save_progress_to_db(user_id, progress_data)
+        await save_progress_to_db(user_id, progress_data)
         
         # Сохраняем в Google Sheets
         report_data = {
