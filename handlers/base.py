@@ -12,6 +12,11 @@ async def handle_all_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     message_text = update.message.text
 
+    # ВАЖНОЕ ИСПРАВЛЕНИЕ: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
+    if context.user_data.get('questionnaire_started'):
+        logger.info(f"🔇 Игнорируем сообщение во время анкеты: {message_text}")
+        return
+
     # УСИЛЕННАЯ ПРОВЕРКА: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
     # Проверяем конкретные состояния анкеты:
     current_question = context.user_data.get('current_question', -2)
