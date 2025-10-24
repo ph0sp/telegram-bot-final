@@ -1,12 +1,14 @@
 import logging
 import json
 import gspread
+import asyncio
 from google.oauth2.service_account import Credentials
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import os
 
 from config import GOOGLE_SHEETS_ID, logger
+from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +155,26 @@ def init_google_sheets():
 # Инициализируем Google Sheets при импорте модуля
 google_sheet = init_google_sheets()
 
-def save_client_to_sheets(user_data: Dict[str, Any]):
-    """Сохраняет клиента в Google Sheets"""
+async def save_client_to_sheets(user_data: Dict[str, Any]):
+    """АСИНХРОННО сохраняет клиента в Google Sheets"""
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
     
+    try:
+        # Запускаем синхронную операцию в отдельном потоке
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _sync_save_client_to_sheets, user_data)
+        
+        logger.info(f"✅ Клиент {user_data['user_id']} сохранен в Google Sheets")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения клиента в Google Sheets: {e}")
+        return False
+
+def _sync_save_client_to_sheets(user_data: Dict[str, Any]):
+    """Синхронная версия сохранения клиента в Google Sheets"""
     try:
         worksheet = google_sheet.worksheet("клиенты_детали")
         
@@ -223,7 +239,6 @@ def save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('ближайшая_цель', '')
             ])
         
-        logger.info(f"✅ Клиент {user_data['user_id']} сохранен в Google Sheets")
         return True
         
     except Exception as e:
@@ -270,32 +285,39 @@ def format_enhanced_plan(plan_data: Dict[str, Any]) -> str:
     
     return plan_text.strip()
 
-def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
-    """Сохраняет ежедневный отчет в Google Sheets"""
+async def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
+    """АСИНХРОННО сохраняет ежедневный отчет в Google Sheets"""
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
-        worksheet = google_sheet.worksheet("ежедневные_отчеты")
-        
-        from database import get_db_connection
-        conn = get_db_connection()
-        if not conn:
-            return False
+        # Асинхронно получаем информацию о пользователе
+        async with get_db_connection() as conn:
+            user_info = await conn.fetchrow("SELECT username, first_name FROM clients WHERE user_id = $1", user_id)
             
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT username, first_name FROM clients WHERE user_id = %s", (user_id,))
-            user_info = cursor.fetchone()
+            if not user_info:
+                logger.error(f"❌ Пользователь {user_id} не найден в БД")
+                return False
+            
+            username = user_info['username'] if user_info['username'] else ""
+            first_name = user_info['first_name'] if user_info['first_name'] else ""
         
-            username = user_info['username'] if user_info and user_info['username'] else ""
-            first_name = user_info['first_name'] if user_info and user_info['first_name'] else ""
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения информации о пользователе {user_id}: {e}")
-            return False
-        finally:
-            conn.close()
+        # Запускаем синхронную операцию в отдельном потоке
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _sync_save_daily_report_to_sheets, user_id, username, first_name, report_data)
+        
+        logger.info(f"✅ Отчет сохранен в Google Sheets для пользователя {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения отчета: {e}")
+        return False
+
+def _sync_save_daily_report_to_sheets(user_id: int, username: str, first_name: str, report_data: Dict[str, Any]):
+    """Синхронная версия сохранения отчета в Google Sheets"""
+    try:
+        worksheet = google_sheet.worksheet("ежедневные_отчеты")
         
         worksheet.append_row([
             user_id,
@@ -327,19 +349,31 @@ def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
             report_data.get('динамика_продуктивности', '')
         ])
         
-        logger.info(f"✅ Отчет сохранен в Google Sheets для пользователя {user_id}")
         return True
         
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения отчета: {e}")
         return False
 
-def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
-    """Получает план на день из Google Sheets"""
+async def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
+    """АСИНХРОННО получает план на день из Google Sheets"""
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return {}
     
+    try:
+        # Запускаем синхронную операцию в отдельном потоке
+        loop = asyncio.get_event_loop()
+        plan_data = await loop.run_in_executor(None, _sync_get_daily_plan_from_sheets, user_id, date)
+        
+        return plan_data
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения плана: {e}")
+        return {}
+
+def _sync_get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
+    """Синхронная версия получения плана из Google Sheets"""
     try:
         worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
         
@@ -441,17 +475,37 @@ def parse_structured_plan(plan_text: str) -> Dict[str, Any]:
     
     return sections
 
-def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any]) -> bool:
-    """Сохраняет план в Google Sheets"""
+async def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any]) -> bool:
+    """АСИНХРОННО сохраняет план в Google Sheets"""
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
-        worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
-        
         # Форматируем план в структурированный текст
         plan_text = format_enhanced_plan(plan)
+        
+        # Асинхронно получаем информацию о пользователе если нужно
+        async with get_db_connection() as conn:
+            user_info = await conn.fetchrow("SELECT username, first_name FROM clients WHERE user_id = $1", user_id)
+            
+            username = user_info['username'] if user_info and user_info['username'] else ""
+            first_name = user_info['first_name'] if user_info and user_info['first_name'] else ""
+        
+        # Запускаем синхронную операцию в отдельном потоке
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _sync_save_daily_plan_to_sheets, user_id, username, first_name, date, plan_text)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения плана: {e}")
+        return False
+
+def _sync_save_daily_plan_to_sheets(user_id: int, username: str, first_name: str, date: str, plan_text: str) -> bool:
+    """Синхронная версия сохранения плана в Google Sheets"""
+    try:
+        worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
         
         # Ищем пользователя
         try:
@@ -459,38 +513,18 @@ def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any]) -> 
             row = cell.row
         except Exception:
             # Если пользователя нет, создаем новую строку
-            from database import get_db_connection
-            conn = get_db_connection()
-            if not conn:
-                return False
-                
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT username, first_name FROM clients WHERE user_id = %s", (user_id,))
-                user_info = cursor.fetchone()
-                
-                username = user_info['username'] if user_info and user_info['username'] else ""
-                first_name = user_info['first_name'] if user_info and user_info['first_name'] else ""
-                
-                # Создаем новую строку
-                current_month = datetime.now().strftime("%B %Y")
-                new_row = [user_id, username, first_name, current_month]
-                # Заполняем пустыми значениями для всех дней
-                for _ in range(31):
-                    new_row.append("")
-                new_row.extend(["", datetime.now().strftime("%Y-%m-%d %H:%M")])
-                
-                worksheet.append_row(new_row)
-                
-                # Теперь находим добавленную строку
-                cell = worksheet.find(str(user_id))
-                row = cell.row
-                
-            except Exception as e:
-                logger.error(f"❌ Ошибка создания строки для пользователя {user_id}: {e}")
-                return False
-            finally:
-                conn.close()
+            current_month = datetime.now().strftime("%B %Y")
+            new_row = [user_id, username, first_name, current_month]
+            # Заполняем пустыми значениями для всех дней
+            for _ in range(31):
+                new_row.append("")
+            new_row.extend(["", datetime.now().strftime("%Y-%m-%d %H:%M")])
+            
+            worksheet.append_row(new_row)
+            
+            # Теперь находим добавленную строку
+            cell = worksheet.find(str(user_id))
+            row = cell.row
         
         # Определяем колонку для нужной даты
         day = datetime.strptime(date, "%Y-%m-%d").day
