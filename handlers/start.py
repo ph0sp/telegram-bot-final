@@ -25,18 +25,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
-    # Очищаем предыдущие ответы (новая анкета каждый раз)
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM questionnaire_answers WHERE user_id = %s", 
-                (user_id,)
-            )
-            conn.commit()
-            logger.info(f"✅ Очищены предыдущие ответы для пользователя {user_id}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка очистки ответов: {e}")
+    # УДАЛЕНО: Восстановление анкеты - теперь всегда начинаем заново
     
     # КНОПКИ С ВАШИМИ СМАЙЛИКАМИ
     keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]
@@ -267,3 +256,5 @@ async def cancel(update: Update, context: CallbackContext) -> int:
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
+
+# УДАЛЕНО: Функция handle_continue_choice и весь функционал восстановления анкеты
