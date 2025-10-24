@@ -22,7 +22,7 @@ def get_db_connection():
     
     conn = None
     try:
-        # Parse the database URL for PostgreSQL
+        # Парсим URL базы данных для PostgreSQL
         urllib.parse.uses_netloc.append("postgres")
         url = urllib.parse.urlparse(DATABASE_URL)
         
@@ -39,12 +39,18 @@ def get_db_connection():
         yield conn
     except psycopg2.OperationalError as e:
         logger.error(f"❌ Ошибка подключения к PostgreSQL (операционная): {e}")
+        if conn:
+            conn.rollback()
         raise
     except psycopg2.Error as e:
         logger.error(f"❌ Ошибка PostgreSQL: {e}")
+        if conn:
+            conn.rollback()
         raise
     except Exception as e:
         logger.error(f"❌ Неожиданная ошибка подключения к БД: {e}")
+        if conn:
+            conn.rollback()
         raise
     finally:
         if conn:
@@ -487,7 +493,7 @@ def get_user_main_goal(user_id: int) -> str:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 1", (user_id,))
+            cursor.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 0", (user_id,))
             result = cursor.fetchone()
             return result['answer_text'] if result else "Цель не установлена"
     except Exception as e:
@@ -524,12 +530,20 @@ def get_user_level_info(user_id: int) -> Dict[str, Any]:
             next_level_points = 50
             points_to_next = 50
             
-            for points, level in sorted(level_names.items()):
+            # Исправленная логика определения уровня
+            sorted_points = sorted(level_names.keys())
+            for i, points in enumerate(sorted_points):
                 if level_points >= points:
-                    current_level = level
+                    current_level = level_names[points]
+                    # Если есть следующий уровень
+                    if i < len(sorted_points) - 1:
+                        next_level_points = sorted_points[i + 1]
+                        points_to_next = next_level_points - level_points
+                    else:
+                        # Достигнут максимальный уровень
+                        next_level_points = points
+                        points_to_next = 0
                 else:
-                    next_level_points = points
-                    points_to_next = points - level_points
                     break
             
             return {
@@ -551,6 +565,7 @@ def get_favorite_ritual(user_id: int) -> str:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
+            # Используем номер вопроса из анкеты для ритуалов
             cursor.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 32", (user_id,))
             result = cursor.fetchone()
             
@@ -690,8 +705,6 @@ def delete_reminder_from_db(reminder_id: int) -> bool:
     except Exception as e:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
-
-# УДАЛЕНО: Функция restore_questionnaire_state и весь функционал восстановления анкеты
 
 # Вызываем инициализацию при импорте модуля только если БД доступна
 if POSTGRESQL_AVAILABLE:
