@@ -1,5 +1,7 @@
 import logging
 from datetime import datetime, time as dt_time
+import signal
+import sys
 
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import (
@@ -15,18 +17,9 @@ from telegram.ext import (
 
 # Автоматические импорты из наших модулей
 from config import (
-    TOKEN, GENDER, READY_CONFIRMATION, QUESTIONNAIRE, ADD_PLAN_USER, 
-    ADD_PLAN_DATE, ADD_PLAN_CONTENT, logger,
+    TOKEN, YOUR_CHAT_ID, GENDER, READY_CONFIRMATION, QUESTIONNAIRE, 
+    ADD_PLAN_USER, ADD_PLAN_DATE, ADD_PLAN_CONTENT, logger,
     POSTGRESQL_AVAILABLE, GOOGLE_SHEETS_AVAILABLE
-)
-# БД автоматически инициализируется при импорте database.py
-from database import (
-    save_user_info, update_user_activity, check_user_registered,
-    save_questionnaire_answer, save_message, save_user_plan_to_db,
-    get_user_plan_from_db, save_progress_to_db, get_user_stats,
-    has_sufficient_data, get_user_activity_streak, get_user_main_goal,
-    get_user_level_info, get_favorite_ritual, get_user_usage_days,
-    add_reminder_to_db, get_user_reminders, delete_reminder_from_db
 )
 
 # ЯВНЫЙ ИМПОРТ всех функций из handlers.start
@@ -42,24 +35,30 @@ from handlers.user import (
 )
 from handlers.admin import (
     admin_add_plan, add_plan_user, add_plan_date, 
-    add_plan_content, admin_stats, admin_users
+    add_plan_content, admin_stats, admin_users, button_callback
 )
 from handlers.reminder import (
     remind_me_command, regular_remind_command, 
     my_reminders_command, delete_remind_command,
-    handle_reminder_nlp
+    handle_reminder_nlp, schedule_reminders, send_morning_plan, send_evening_survey
 )
-from handlers.admin import button_callback
 from handlers.base import handle_all_messages
-from handlers.reminder import (
-    schedule_reminders, send_morning_plan, send_evening_survey
-)
+
+# Глобальная переменная для graceful shutdown
+application = None
+
+def signal_handler(sig, frame):
+    """Обработчик сигналов для graceful shutdown"""
+    logger.info("🛑 Получен сигнал остановки...")
+    if application:
+        application.stop()
+    sys.exit(0)
 
 async def error_handler(update: Update, context: CallbackContext) -> None:
-    """Автоматически обрабатывает ошибки бота БЕЗ отправки в Telegram"""
+    """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
     error = context.error
     
-    # Автоматически игнорируем самые частые и неважные ошибки
+    # Игнорируем самые частые и неважные ошибки
     ignore_errors = [
         "terminated by other getUpdates request",
         "Conflict", 
@@ -77,44 +76,51 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
         "Chat not found"
     ]
     
-    # Автоматически проверяем, нужно ли игнорировать эту ошибку
+    # Проверяем, нужно ли игнорировать эту ошибку
     for ignore in ignore_errors:
         if ignore in str(error):
-            logger.warning(f"⚠️ Автоматически игнорируем ошибку: {error}")
+            logger.warning(f"⚠️ Игнорируем ошибку: {error}")
             return
     
-    # Только автоматически логируем ошибки в файл, НЕ отправляем в Telegram
-    logger.error(f"❌ Автоматически обработана ошибка в боте: {error}")
+    # Логируем ошибки в файл
+    logger.error(f"❌ Ошибка в боте: {error}")
 
 def main():
-    """Автоматическая функция запуска бота"""
+    """Функция запуска бота"""
+    global application
+    
     try:
-        # Автоматическое логирование информации о доступных сервисах
-        logger.info("=== АВТОМАТИЧЕСКИЙ ЗАПУСК БОТА ===")
+        # Настройка обработчиков сигналов
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Логирование информации о доступных сервисах
+        logger.info("=== ЗАПУСК БОТА ===")
         logger.info(f"✅ PostgreSQL доступен: {POSTGRESQL_AVAILABLE}")
         logger.info(f"✅ Google Sheets доступен: {GOOGLE_SHEETS_AVAILABLE}")
         logger.info(f"✅ Токен бота: {'установлен' if TOKEN else 'ОТСУТСТВУЕТ'}")
-        logger.info(f"✅ Chat ID: {'установлен' if TOKEN else 'ОТСУТСТВУЕТ'}")
+        logger.info(f"✅ Chat ID: {'установлен' if YOUR_CHAT_ID else 'ОТСУТСТВУЕТ'}")
         
-        # Автоматическая проверка обязательных переменных
+        # Проверка обязательных переменных
         if not TOKEN or ':' not in TOKEN:
             logger.error("❌ Неверный формат токена! Токен должен быть в формате '123456789:ABCdef...'")
             return
 
-        # БД автоматически инициализируется при импорте database.py
-        # Ничего не нужно вызывать вручную!
+        if not YOUR_CHAT_ID:
+            logger.error("❌ Chat ID не указан! Установите YOUR_CHAT_ID в .env файле")
+            return
 
-        # Автоматическое создание приложения
-        logger.info("🔄 Автоматическое создание приложения Telegram...")
+        # Создание приложения
+        logger.info("🔄 Создание приложения Telegram...")
         application = Application.builder().token(TOKEN).build()
         
-        # Автоматическая регистрация обработчика ошибок
+        # Регистрация обработчика ошибок
         application.add_error_handler(error_handler)
 
-        # Автоматическая настройка обработчика диалога
-        logger.info("🔄 Автоматическая регистрация обработчиков команд...")
+        # Настройка обработчика диалога
+        logger.info("🔄 Регистрация обработчиков команд...")
         
-        # СОЗДАЕМ ConversationHandler с правильными состояниями - ЕДИНСТВЕННЫЙ обработчик для /start
+        # ConversationHandler - единственный обработчик для /start
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
@@ -136,55 +142,55 @@ def main():
             name="main_conversation"
         )
 
-        # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ и ЕДИНСТВЕННЫМ обработчиком для /start
+        # ConversationHandler должен быть первым
         application.add_handler(conv_handler)
         
-        # Автоматическая регистрация команд для пользователей
-        # УБЕДИТЕСЬ, что здесь НЕТ CommandHandler('start', ...)
+        # Регистрация команд для пользователей
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("profile", profile_command))
         application.add_handler(CommandHandler("points_info", points_info_command))
         application.add_handler(CommandHandler("help", help_command))
         
-        # Автоматическая регистрация команд для отслеживания прогресса
+        # Команды для отслеживания прогресса
         application.add_handler(CommandHandler("done", done_command))
         application.add_handler(CommandHandler("mood", mood_command))
         application.add_handler(CommandHandler("energy", energy_command))
         application.add_handler(CommandHandler("water", water_command))
         
-        # Автоматическая регистрация команд для напоминаний
+        # Команды для напоминаний
         application.add_handler(CommandHandler("remind_me", remind_me_command))
         application.add_handler(CommandHandler("regular_remind", regular_remind_command))
         application.add_handler(CommandHandler("my_reminders", my_reminders_command))
         application.add_handler(CommandHandler("delete_remind", delete_remind_command))
 
-        # Автоматическая регистрация команд для администратора
+        # Команды для администратора
         application.add_handler(CommandHandler("add_plan", admin_add_plan))
         application.add_handler(CommandHandler("admin_stats", admin_stats))
         application.add_handler(CommandHandler("admin_users", admin_users))
         
-        # Автоматическая регистрация обработчиков кнопок
+        # Обработчики кнопок
         application.add_handler(CallbackQueryHandler(button_callback))
         
-        # Обработчик всех сообщений регистрируем ПОСЛЕДНИМ с группой 1
+        # Обработчик всех сообщений - последним
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
         
-        # Автоматическая настройка системы напоминаний
-        logger.info("🔄 Автоматическая настройка системы напоминаний...")
+        # Настройка системы напоминаний
+        logger.info("🔄 Настройка системы напоминаний...")
         schedule_reminders(application)
         
-        # Автоматическая настройка JobQueue
-        logger.info("🔄 Автоматическая настройка JobQueue...")
+        # Настройка JobQueue
+        logger.info("🔄 Настройка JobQueue...")
         try:
             job_queue = application.job_queue
             if job_queue:
-                # Автоматическое удаление старых задач
-                current_jobs = job_queue.jobs()
-                for job in current_jobs:
+                # Удаляем только наши старые задачи
+                our_jobs = [job for job in job_queue.jobs() if job.name in ["morning_plan", "evening_survey"]]
+                for job in our_jobs:
                     job.schedule_removal()
+                logger.info(f"🧹 Удалено {len(our_jobs)} старых задач")
                 
-                # Автоматическое утреннее сообщение в 6:00 (3:00 UTC для UTC+3)
+                # Утреннее сообщение в 6:00 (3:00 UTC для UTC+3)
                 job_queue.run_daily(
                     callback=send_morning_plan,
                     time=dt_time(hour=3, minute=0, second=0),
@@ -192,7 +198,7 @@ def main():
                     name="morning_plan"
                 )
                 
-                # Автоматическое вечерний опрос в 21:00 (18:00 UTC для UTC+3)
+                # Вечерний опрос в 21:00 (18:00 UTC для UTC+3)
                 job_queue.run_daily(
                     callback=send_evening_survey,
                     time=dt_time(hour=18, minute=0, second=0),
@@ -200,17 +206,17 @@ def main():
                     name="evening_survey"
                 )
                 
-                logger.info("✅ JobQueue автоматически настроен для автоматических сообщений")
+                logger.info("✅ JobQueue настроен для автоматических сообщений")
             else:
-                logger.warning("⚠️ JobQueue не доступен для автоматической настройки")
+                logger.warning("⚠️ JobQueue не доступен")
                 
         except Exception as e:
-            logger.error(f"❌ Автоматическая настройка JobQueue не удалась: {e}")
+            logger.error(f"❌ Настройка JobQueue не удалась: {e}")
 
-        logger.info("🤖 Бот автоматически запускается...")
-        logger.info("=== ВСЕ СИСТЕМЫ АВТОМАТИЧЕСКИ ЗАПУЩЕНЫ ===")
+        logger.info("🤖 Бот запускается...")
+        logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
-        # Автоматический запуск бота
+        # Запуск бота
         application.run_polling(
             poll_interval=1.0,
             timeout=20,
@@ -222,8 +228,10 @@ def main():
             ]
         )
         
+    except KeyboardInterrupt:
+        logger.info("🛑 Бот остановлен пользователем")
     except Exception as e:
-        logger.error(f"❌ Автоматический запуск бота не удался: {e}")
+        logger.error(f"❌ Запуск бота не удался: {e}")
         raise
 
 if __name__ == '__main__':
