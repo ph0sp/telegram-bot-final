@@ -124,7 +124,7 @@ def main():
                 READY_CONFIRMATION: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ready_confirmation)
                 ],
-                QUESTIONNAIRE: [
+                QUESTIONNAIRE: [  # ВАЖНО: используем QUESTIONNAIRE для вопросов анкеты
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
                 ],
                 ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
