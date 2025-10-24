@@ -56,7 +56,7 @@ from handlers.reminder import (
 )
 
 async def error_handler(update: Update, context: CallbackContext) -> None:
-    """Автоматически обрабатывает ошибки бота БЕС отправки в Telegram"""
+    """Автоматически обрабатывает ошибки бота БЕЗ отправки в Telegram"""
     error = context.error
     
     # Автоматически игнорируем самые частые и неважные ошибки
@@ -113,11 +113,38 @@ def main():
 
         # Автоматическая настройка обработчика диалога
         logger.info("🔄 Автоматическая регистрация обработчиков команд...")
+        
+        # ВАЖНО: ConversationHandler должен быть ЕДИНСТВЕННЫМ обработчиком для /start
+        # УБИРАЕМ все отдельные CommandHandler('start', ...) если они есть
+        
+        # СОЗДАЕМ ConversationHandler с правильными состояниями
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],  # ЕДИНСТВЕННЫЙ обработчик для /start
+            states={
+                GENDER: [
+                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)
+                ],
+                READY_CONFIRMATION: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ready_confirmation)
+                ],
+                QUESTIONNAIRE: [  # ВАЖНО: используем QUESTIONNAIRE для вопросов анкеты
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
+                ],
+                ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
+                ADD_PLAN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_date)],
+                ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+            # Важно: позволяем перезапускать анкету
+            allow_reentry=True,
+            name="main_conversation"  # Добавляем имя для отладки
+        )
 
         # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ обработчиком
         application.add_handler(conv_handler)
         
         # Автоматическая регистрация команд для пользователей
+        # УБЕДИТЕСЬ, что здесь НЕТ CommandHandler('start', ...)
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("profile", profile_command))
