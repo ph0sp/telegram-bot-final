@@ -12,23 +12,10 @@ from services.google_sheets import save_client_to_sheets
 
 logger = logging.getLogger(__name__)
 
-# Глобальный словарь для отслеживания последних обработанных сообщений по пользователям
-last_processed_timestamps = {}
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /start - начинает анкету заново каждый раз"""
     user = update.effective_user
     user_id = user.id
-    
-    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: проверяем временную метку
-    current_time = datetime.now().timestamp()
-    last_time = last_processed_timestamps.get(user_id, 0)
-    
-    if current_time - last_time < 2:  # Если прошло меньше 2 секунд с последнего /start
-        logger.warning(f"🚨 ЗАЩИТА: повторный /start от пользователя {user_id} за последние 2 секунды - игнорируем")
-        return ConversationHandler.END
-    
-    last_processed_timestamps[user_id] = current_time
     
     logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
     
@@ -64,36 +51,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user_id = update.effective_user.id
     user_text = update.message.text
     
-    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: проверяем временную метку
-    current_time = datetime.now().timestamp()
-    last_time = last_processed_timestamps.get(user_id, 0)
-    
-    if current_time - last_time < 1:  # Если прошло меньше 1 секунды
-        logger.warning(f"🚨 ЗАЩИТА: быстрый повторный выбор пола от пользователя {user_id} - игнорируем")
-        return READY_CONFIRMATION
-    
-    last_processed_timestamps[user_id] = current_time
-    
-    # ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: проверяем, не выбрал ли уже пользователь пол
-    if context.user_data.get('assistant_gender'):
-        logger.warning(f"⚠️ Пол уже выбран: {context.user_data.get('assistant_gender')}. Пропускаем дублирование.")
-        # Но все равно отправляем приветствие, если его не было
-        if not context.user_data.get('greeting_sent'):
-            assistant_name = context.user_data.get('assistant_name', 'Ассистент')
-            greeting_emoji = context.user_data.get('greeting_emoji', '👋')
-            await update.message.reply_text(
-                f'{greeting_emoji} Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
-                f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
-                f'Я составлю для вас сбалансированный план на месяц, а затем мы будем ежедневно отслеживать прогресс и ваше состояние, '
-                f'чтобы вы двигались к цели уверенно и эффективно и с заботой о главных ресурсах: сне, спорте и питании.\n\n'
-                f'Для составления плана, который будет работать именно для вас, мне нужно понять ваш ритм жизни и цели. '
-                f'Это займет около 25-30 минут. Но в результате вы получите персональную стратегию на месяц, а не шаблонный список дел.\n\n'
-                f'Готовы начать?',
-                reply_markup=ReplyKeyboardRemove()
-            )
-            context.user_data['greeting_sent'] = True
-        return READY_CONFIRMATION
-    
     logger.info(f"🎭 Пользователь {user_id} выбрал: {user_text}")
     
     # Обрабатываем ВАШИ смайлики
@@ -124,8 +81,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=ReplyKeyboardRemove()
     )
     
-    context.user_data['greeting_sent'] = True
-    
     # Устанавливаем, что следующий шаг - подтверждение готовности
     context.user_data['current_question'] = -1
     
@@ -137,30 +92,9 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
     user_id = update.effective_user.id
     answer_text = update.message.text
     
-    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: проверяем временную метку
-    current_time = datetime.now().timestamp()
-    last_time = last_processed_timestamps.get(user_id, 0)
-    
-    if current_time - last_time < 1:  # Если прошло меньше 1 секунды
-        logger.warning(f"🚨 ЗАЩИТА: быстрый повторный ответ готовности от пользователя {user_id} - игнорируем")
-        return QUESTIONNAIRE
-    
-    last_processed_timestamps[user_id] = current_time
-    
-    # ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: проверяем, не начали ли мы уже анкету
-    current_question = context.user_data.get('current_question', -2)
-    if current_question >= 0:
-        logger.warning(f"🚨 ЗАЩИТА: анкета уже начата для пользователя {user_id}, текущий вопрос: {current_question}")
-        # Продолжаем с текущего вопроса
-        if current_question < len(QUESTIONS):
-            await update.message.reply_text(QUESTIONS[current_question])
-            return QUESTIONNAIRE
-        else:
-            return await finish_questionnaire(update, context)
-    
     logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
     
-    # Начинаем анкету ЗАНОВО
+    # Любой ответ считается согласием - начинаем анкету ЗАНОВО
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}
     
@@ -175,28 +109,8 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     answer_text = update.message.text
     
-    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: проверяем временную метку
-    current_time = datetime.now().timestamp()
-    last_time = last_processed_timestamps.get(user_id, 0)
-    
-    if current_time - last_time < 1:  # Если прошло меньше 1 секунды
-        logger.warning(f"🚨 ЗАЩИТА: быстрый повторный ответ на вопрос от пользователя {user_id} - игнорируем")
-        current_question = context.user_data.get('current_question', 0)
-        if current_question < len(QUESTIONS) - 1:
-            return QUESTIONNAIRE
-        else:
-            return await finish_questionnaire(update, context)
-    
-    last_processed_timestamps[user_id] = current_time
-    
     current_question = context.user_data.get('current_question', 0)
     logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
-    
-    # Проверяем, не пытаемся ли мы обработать вопрос за пределами списка
-    if current_question < 0 or current_question >= len(QUESTIONS):
-        logger.error(f"❌ ОШИБКА: current_question={current_question} вне диапазона [0, {len(QUESTIONS)-1}]")
-        await update.message.reply_text("Произошла ошибка в анкете. Давайте начнем заново. Используйте /start")
-        return ConversationHandler.END
     
     # Сохраняем ответ на текущий вопрос
     save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
@@ -317,10 +231,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     # Полностью очищаем данные анкеты после завершения
     context.user_data.clear()
     
-    # Удаляем временную метку пользователя
-    if user_id in last_processed_timestamps:
-        del last_processed_timestamps[user_id]
-    
     logger.info(f"🧹 Данные анкеты очищены для пользователя {user_id}")
     return ConversationHandler.END
 
@@ -330,10 +240,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     
     # Очищаем данные анкеты
     context.user_data.clear()
-    
-    # Удаляем временную метку пользователя
-    if user_id in last_processed_timestamps:
-        del last_processed_timestamps[user_id]
     
     logger.info(f"❌ Анкета отменена пользователем {user_id}")
     
