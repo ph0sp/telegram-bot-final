@@ -114,12 +114,9 @@ def main():
         # Автоматическая настройка обработчика диалога
         logger.info("🔄 Автоматическая регистрация обработчиков команд...")
         
-        # ВАЖНО: ConversationHandler должен быть ЕДИНСТВЕННЫМ обработчиком для /start
-        # УБИРАЕМ все отдельные CommandHandler('start', ...) если они есть
-        
-        # СОЗДАЕМ ConversationHandler с правильными состояниями
+        # СОЗДАЕМ ConversationHandler с правильными состояниями - ЕДИНСТВЕННЫЙ обработчик для /start
         conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],  # ЕДИНСТВЕННЫЙ обработчик для /start
+            entry_points=[CommandHandler('start', start)],
             states={
                 GENDER: [
                     MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)
@@ -127,7 +124,7 @@ def main():
                 READY_CONFIRMATION: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ready_confirmation)
                 ],
-                QUESTIONNAIRE: [  # ВАЖНО: используем QUESTIONNAIRE для вопросов анкеты
+                QUESTIONNAIRE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
                 ],
                 ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
@@ -135,12 +132,11 @@ def main():
                 ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
-            # Важно: позволяем перезапускать анкету
             allow_reentry=True,
-            name="main_conversation"  # Добавляем имя для отладки
+            name="main_conversation"
         )
 
-        # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ обработчиком
+        # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ и ЕДИНСТВЕННЫМ обработчиком для /start
         application.add_handler(conv_handler)
         
         # Автоматическая регистрация команд для пользователей
