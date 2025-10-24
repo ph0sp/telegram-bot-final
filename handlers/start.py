@@ -11,15 +11,12 @@ from database import (
 from services.google_sheets import save_client_to_sheets
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /start - начинает анкету заново каждый раз"""
+    """Обработчик команды /start - начинает новую анкету"""
     try:
         user = update.effective_user
         user_id = user.id
         
         logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
-        
-        # Полностью очищаем данные предыдущей анкеты
-        context.user_data.clear()
         
         # Сохраняем пользователя с обработкой ошибок (АСИНХРОННО)
         try:
@@ -45,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data['current_question'] = -1
         context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
+        context.user_data['questionnaire_id'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         logger.info(f"🔁 Начинаем новую анкету, возвращаем состояние GENDER ({GENDER})")
         
@@ -120,15 +118,24 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
         
-        # Любой ответ считается согласием - начинаем анкету ЗАНОВО
-        context.user_data['current_question'] = 0
-        context.user_data['answers'] = {}
+        # ВАЖНО: НЕ сбрасываем прогресс анкеты! Просто продолжаем с того же места
+        # Если анкета еще не начата, устанавливаем первый вопрос
+        if context.user_data.get('current_question', -1) < 0:
+            context.user_data['current_question'] = 0
+        
+        # Инициализируем answers только если его нет
+        if 'answers' not in context.user_data:
+            context.user_data['answers'] = {}
+            
         context.user_data['questionnaire_started'] = True
         
-        # ВАЖНО: Отправляем ПЕРВЫЙ вопрос БЕЗ дублирования текста - просто QUESTIONS[0]
-        await update.message.reply_text(QUESTIONS[0])
+        # Получаем текущий вопрос
+        current_question = context.user_data['current_question']
         
-        logger.info(f"🔁 Начинаем вопросы анкеты с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
+        # Отправляем текущий вопрос (не всегда первый!)
+        await update.message.reply_text(QUESTIONS[current_question])
+        
+        logger.info(f"🔁 Продолжаем анкету с вопроса {current_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
         return QUESTIONNAIRE
     
     except Exception as e:
@@ -189,8 +196,9 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         user = update.effective_user
         user_id = user.id
         assistant_name = context.user_data.get('assistant_name', 'Ассистент')
+        questionnaire_id = context.user_data.get('questionnaire_id', 'unknown')
         
-        logger.info(f"🎉 Завершаем анкету для пользователя {user_id}")
+        logger.info(f"🎉 Завершаем анкету {questionnaire_id} для пользователя {user_id}")
         
         # Сохраняем данные анкеты в Google Sheets с обработкой ошибок
         user_data = {
@@ -207,12 +215,19 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             'максимальная_серия_активности': '0',
             'любимый_ритуал': '',
             'дата_последнего_прогресса': datetime.now().strftime("%Y-%m-%d"),
-            'ближайшая_цель': 'Заполнить первую неделю активности'
+            'ближайшая_цель': 'Заполнить первую неделю активности',
+            'questionnaire_id': questionnaire_id,  # Уникальный ID анкеты
+            'assistant_name': assistant_name
         }
+        
+        # Добавляем все ответы на вопросы
+        for i, question in enumerate(QUESTIONS):
+            answer = context.user_data['answers'].get(i, '❌ Нет ответа')
+            user_data[f'question_{i+1}'] = answer
         
         try:
             save_client_to_sheets(user_data)
-            logger.info(f"✅ Данные пользователя {user_id} сохранены в Google Sheets")
+            logger.info(f"✅ Данные анкеты {questionnaire_id} сохранены в Google Sheets")
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в Google Sheets: {e}")
             # Не прерываем выполнение, так как это не критично для пользователя
@@ -226,7 +241,8 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         if user.username:
             questionnaire += f"🔗 Username: @{user.username}\n"
         questionnaire += f"📅 Дата: {update.message.date.strftime('%Y-%m-%d %H:%M')}\n"
-        questionnaire += f"👨‍💼 Ассистент: {assistant_name}\n\n"
+        questionnaire += f"👨‍💼 Ассистент: {assistant_name}\n"
+        questionnaire += f"🆔 ID анкеты: {questionnaire_id}\n\n"
         
         questionnaire += "📝 Ответы на вопросы:\n\n"
         
@@ -265,7 +281,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             
             await context.bot.send_message(
                 chat_id=YOUR_CHAT_ID, 
-                text=f"✅ Пользователь {user.first_name} завершил анкету!",
+                text=f"✅ Пользователь {user.first_name} завершил анкету {questionnaire_id}!",
                 reply_markup=reply_markup
             )
             logger.info("✅ Кнопки действий отправлены админу")
