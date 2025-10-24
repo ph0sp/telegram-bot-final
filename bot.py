@@ -248,7 +248,11 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        # Запускаем асинхронную функцию main
-        asyncio.run(main())
+        # Используем низкоуровневый подход для обхода проблемы с event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
     except Exception as e:
         logging.error(f"❌ Ошибка запуска бота: {e}")
+    finally:
+        loop.close()
