@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, time as dt_time
 import signal
 import sys
+import asyncio
 
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import (
@@ -44,6 +45,9 @@ from handlers.reminder import (
 )
 from handlers.base import handle_all_messages
 
+# Импорт асинхронной инициализации БД
+from database import initialize_database
+
 # Глобальная переменная для graceful shutdown
 application = None
 
@@ -85,8 +89,8 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
     # Логируем ошибки в файл
     logger.error(f"❌ Ошибка в боте: {error}")
 
-def main():
-    """Функция запуска бота"""
+async def main():
+    """Асинхронная функция запуска бота"""
     global application
     
     try:
@@ -109,6 +113,14 @@ def main():
         if not YOUR_CHAT_ID:
             logger.error("❌ Chat ID не указан! Установите YOUR_CHAT_ID в .env файле")
             return
+
+        # ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ (АСИНХРОННАЯ)
+        if POSTGRESQL_AVAILABLE:
+            logger.info("🔄 Инициализация базы данных...")
+            await initialize_database()
+            logger.info("✅ База данных инициализирована")
+        else:
+            logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
 
         # Создание приложения
         logger.info("🔄 Создание приложения Telegram...")
@@ -217,7 +229,7 @@ def main():
         logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
         # Запуск бота
-        application.run_polling(
+        await application.run_polling(
             poll_interval=1.0,
             timeout=20,
             drop_pending_updates=True,
@@ -235,4 +247,5 @@ def main():
         raise
 
 if __name__ == '__main__':
-    main()
+    # Запуск асинхронной main функции
+    asyncio.run(main())
