@@ -9,10 +9,19 @@ logger = logging.getLogger(__name__)
 
 async def handle_all_messages(update: Update, context: CallbackContext):
     """Обрабатывает все текстовые сообщения включая кнопки"""
-    # ПРОВЕРЯЕМ, НЕ НАХОДИТСЯ ЛИ ПОЛЬЗОВАТЕЛЬ В СОСТОЯНИИ CONVERSATIONHANDLER
-    # Если пользователь в процессе анкеты, пропускаем обработку
-    if context.user_data and any(key in context.user_data for key in ['current_question', 'assistant_gender', 'assistant_name']):
-        logger.info(f"⏩ Пропускаем сообщение в состоянии ConversationHandler: {update.message.text}")
+    
+    # УСИЛЕННАЯ ПРОВЕРКА: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
+    # Ключи, которые указывают на активную анкету:
+    # - 'current_question' >= 0 (в процессе вопросов)
+    # - 'current_question' == -1 (ждут подтверждения готовности) 
+    # - 'assistant_gender' и 'assistant_name' (выбрали пол, но еще не начали анкету)
+    questionnaire_keys = ['current_question', 'assistant_gender', 'assistant_name', 'greeting_emoji', 'questionnaire_started']
+    
+    has_questionnaire_keys = context.user_data and any(key in context.user_data for key in questionnaire_keys)
+    
+    if has_questionnaire_keys:
+        current_question = context.user_data.get('current_question', -2)
+        logger.info(f"⏩ Пропускаем сообщение в состоянии анкеты (вопрос {current_question}): {update.message.text}")
         return
     
     user_id = update.effective_user.id
@@ -25,7 +34,7 @@ async def handle_all_messages(update: Update, context: CallbackContext):
     logger.info(f"💬 Получено сообщение от {user_id}: {message_text}")
 
     # Проверяем, является ли сообщение напоминанием
-    if any(word in message_text.lower() for word in ['напомни', 'напоминай']):
+    if any(word in message_text.lower() for word in ['напомни', 'напоминай', 'напомни мне']):
         from handlers.reminder import handle_reminder_nlp
         await handle_reminder_nlp(update, context)
         return
