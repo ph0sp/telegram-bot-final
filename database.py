@@ -4,71 +4,73 @@ import re
 import urllib.parse
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import asyncpg
+from asyncpg import Connection, Record
 
 from config import DATABASE_URL, logger, QUESTIONS, POSTGRESQL_AVAILABLE
 
-# ========== УНИВЕРСАЛЬНАЯ СИСТЕМА БАЗЫ ДАННЫХ ==========
+# ========== АСИНХРОННАЯ СИСТЕМА БАЗЫ ДАННЫХ ==========
 
-@contextmanager
-def get_db_connection():
-    """Контекстный менеджер для подключения к PostgreSQL"""
+# Глобальный пул подключений для эффективности
+_connection_pool = None
+
+async def get_connection_pool():
+    """Создает и возвращает пул подключений к PostgreSQL"""
+    global _connection_pool
+    if _connection_pool is None:
+        try:
+            _connection_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=10,
+                command_timeout=60,
+                server_settings={
+                    'application_name': 'telegram_bot',
+                    'timezone': 'UTC'
+                }
+            )
+            logger.info("✅ Пул подключений к PostgreSQL создан")
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания пула подключений: {e}")
+            raise
+    return _connection_pool
+
+@asynccontextmanager
+async def get_db_connection():
+    """Асинхронный контекстный менеджер для подключения к PostgreSQL"""
     if not DATABASE_URL or not POSTGRESQL_AVAILABLE:
         logger.error("❌ PostgreSQL не настроен или не доступен")
         raise Exception("PostgreSQL не доступен")
     
+    pool = await get_connection_pool()
     conn = None
     try:
-        # Парсим URL базы данных для PostgreSQL
-        urllib.parse.uses_netloc.append("postgres")
-        url = urllib.parse.urlparse(DATABASE_URL)
-        
-        conn = psycopg2.connect(
-            database=url.path[1:],
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port,
-            cursor_factory=RealDictCursor,
-            connect_timeout=10
-        )
+        conn = await pool.acquire()
         logger.debug("✅ Подключение к PostgreSQL установлено")
         yield conn
-    except psycopg2.OperationalError as e:
-        logger.error(f"❌ Ошибка подключения к PostgreSQL (операционная): {e}")
-        if conn:
-            conn.rollback()
-        raise
-    except psycopg2.Error as e:
+    except asyncpg.PostgresError as e:
         logger.error(f"❌ Ошибка PostgreSQL: {e}")
-        if conn:
-            conn.rollback()
         raise
     except Exception as e:
         logger.error(f"❌ Неожиданная ошибка подключения к БД: {e}")
-        if conn:
-            conn.rollback()
         raise
     finally:
         if conn:
-            conn.close()
-            logger.debug("🔌 Подключение к PostgreSQL закрыто")
+            await pool.release(conn)
+            logger.debug("🔌 Подключение к PostgreSQL возвращено в пул")
 
-def init_database():
-    """Инициализирует таблицы в базе данных PostgreSQL"""
+async def init_database():
+    """Асинхронно инициализирует таблицы в базе данных PostgreSQL"""
     if not POSTGRESQL_AVAILABLE:
         logger.error("❌ PostgreSQL не доступен для инициализации")
         return False
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
+        async with get_db_connection() as conn:
             # Таблица клиентов
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS clients (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT UNIQUE NOT NULL,
@@ -84,7 +86,7 @@ def init_database():
             ''')
             
             # Таблица ответов анкеты
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS questionnaire_answers (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -98,7 +100,7 @@ def init_database():
             ''')
             
             # Таблица прогресса
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_progress (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -119,7 +121,7 @@ def init_database():
             ''')
             
             # Таблица напоминаний
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_reminders (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -135,7 +137,7 @@ def init_database():
             ''')
             
             # Таблица планов
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_plans (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -162,7 +164,7 @@ def init_database():
             ''')
             
             # Таблица сообщений
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_messages (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -175,14 +177,13 @@ def init_database():
             ''')
             
             # Создаем индексы для улучшения производительности
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_questionnaire_user_id ON questionnaire_answers(user_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_progress_user_date ON user_progress(user_id, progress_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_plans_user_date ON user_plans(user_id, plan_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_reminders_user_active ON user_reminders(user_id, is_active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_created ON user_messages(user_id, created_at)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_questionnaire_user_id ON questionnaire_answers(user_id)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_progress_user_date ON user_progress(user_id, progress_date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_plans_user_date ON user_plans(user_id, plan_date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_reminders_user_active ON user_reminders(user_id, is_active)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_created ON user_messages(user_id, created_at)')
             
-            conn.commit()
             logger.info("✅ Таблицы PostgreSQL инициализированы и индексы созданы")
             return True
             
@@ -190,106 +191,95 @@ def init_database():
         logger.error(f"❌ Ошибка инициализации БД: {e}")
         return False
 
-# ========== ОСНОВНЫЕ ФУНКЦИИ БАЗЫ ДАННЫХ ==========
+# ========== ОСНОВНЫЕ АСИНХРОННЫЕ ФУНКЦИИ БАЗЫ ДАННЫХ ==========
 
-def save_user_info(user_id: int, username: str, first_name: str, last_name: Optional[str] = None):
-    """Сохраняет информацию о пользователе в базу данных безопасно"""
+async def save_user_info(user_id: int, username: str, first_name: str, last_name: Optional[str] = None):
+    """Асинхронно сохраняет информацию о пользователе в базу данных"""
     if not POSTGRESQL_AVAILABLE:
         logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем сохранение пользователя {user_id}")
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             registration_date = datetime.now()
             
-            cursor.execute('''INSERT INTO clients 
+            await conn.execute('''INSERT INTO clients 
                              (user_id, username, first_name, last_name, status, registration_date, last_activity) 
-                             VALUES (%s, %s, %s, %s, %s, %s, %s)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7)
                              ON CONFLICT (user_id) DO UPDATE SET
                              username = EXCLUDED.username,
                              first_name = EXCLUDED.first_name,
                              last_name = EXCLUDED.last_name,
                              last_activity = EXCLUDED.last_activity''',
-                          (user_id, username, first_name, last_name, 'active', registration_date, registration_date))
+                          user_id, username, first_name, last_name, 'active', registration_date, registration_date)
             
-            conn.commit()
             logger.info(f"✅ Информация о пользователе {user_id} сохранена в БД")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
 
-def update_user_activity(user_id: int):
-    """Обновляет время последней активности пользователя безопасно"""
+async def update_user_activity(user_id: int):
+    """Асинхронно обновляет время последней активности пользователя"""
     if not POSTGRESQL_AVAILABLE:
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             last_activity = datetime.now()
             
-            cursor.execute('''UPDATE clients SET last_activity = %s WHERE user_id = %s''',
-                          (last_activity, user_id))
+            await conn.execute('''UPDATE clients SET last_activity = $1 WHERE user_id = $2''',
+                          last_activity, user_id)
             
-            conn.commit()
     except Exception as e:
         logger.error(f"❌ Ошибка обновления активности {user_id}: {e}")
 
-def check_user_registered(user_id: int) -> bool:
-    """Проверяет зарегистрирован ли пользователь безопасно"""
+async def check_user_registered(user_id: int) -> bool:
+    """Асинхронно проверяет зарегистрирован ли пользователь"""
     if not POSTGRESQL_AVAILABLE:
         return False
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT user_id FROM clients WHERE user_id = %s", (user_id,))
-            
-            result = cursor.fetchone()
+        async with get_db_connection() as conn:
+            result = await conn.fetchrow("SELECT user_id FROM clients WHERE user_id = $1", user_id)
             return result is not None
             
     except Exception as e:
         logger.error(f"❌ Ошибка проверки регистрации {user_id}: {e}")
         return False
 
-def save_questionnaire_answer(user_id: int, question_number: int, question_text: str, answer_text: str):
-    """Сохраняет ответ на вопрос анкеты безопасно"""
+async def save_questionnaire_answer(user_id: int, question_number: int, question_text: str, answer_text: str):
+    """Асинхронно сохраняет ответ на вопрос анкеты"""
     if not POSTGRESQL_AVAILABLE:
         logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем сохранение ответа {user_id}")
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             answer_date = datetime.now()
             
             # Получаем текст вопроса из конфига, если не передан
             if not question_text and question_number < len(QUESTIONS):
                 question_text = QUESTIONS[question_number][:500]  # Обрезаем длинные вопросы
             
-            cursor.execute('''INSERT INTO questionnaire_answers 
+            await conn.execute('''INSERT INTO questionnaire_answers 
                              (user_id, question_number, question_text, answer_text, answer_date) 
-                             VALUES (%s, %s, %s, %s, %s)
+                             VALUES ($1, $2, $3, $4, $5)
                              ON CONFLICT (user_id, question_number) 
                              DO UPDATE SET 
                                 answer_text = EXCLUDED.answer_text,
                                 answer_date = EXCLUDED.answer_date''',
-                          (user_id, question_number, question_text, answer_text, answer_date))
+                          user_id, question_number, question_text, answer_text, answer_date)
             
-            conn.commit()
             logger.debug(f"✅ Ответ на вопрос {question_number} сохранен для пользователя {user_id}")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения ответа {user_id}: {e}")
 
-def save_message(user_id: int, message_text: str, direction: str):
-    """Сохраняет сообщение в базу данных безопасно"""
+async def save_message(user_id: int, message_text: str, direction: str):
+    """Асинхронно сохраняет сообщение в базу данных"""
     if not POSTGRESQL_AVAILABLE:
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             created_at = datetime.now()
             
             # Определяем тип сообщения
@@ -299,31 +289,29 @@ def save_message(user_id: int, message_text: str, direction: str):
             elif any(keyword in message_text.lower() for keyword in ['команда', '/start', '/help']):
                 message_type = 'command'
             
-            cursor.execute('''INSERT INTO user_messages 
+            await conn.execute('''INSERT INTO user_messages 
                              (user_id, message_text, direction, message_type, created_at) 
-                             VALUES (%s, %s, %s, %s, %s)''',
-                          (user_id, message_text, direction, message_type, created_at))
+                             VALUES ($1, $2, $3, $4, $5)''',
+                          user_id, message_text, direction, message_type, created_at)
             
-            conn.commit()
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения сообщения {user_id}: {e}")
 
-def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
-    """Сохраняет план пользователя в базу данных безопасно"""
+async def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
+    """Асинхронно сохраняет план пользователя в базу данных"""
     if not POSTGRESQL_AVAILABLE:
         logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем сохранение плана {user_id}")
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             created_date = datetime.now()
             
-            cursor.execute('''INSERT INTO user_plans 
+            await conn.execute('''INSERT INTO user_plans 
                              (user_id, plan_date, morning_ritual1, morning_ritual2, task1, task2, task3, task4, 
                               lunch_break, evening_ritual1, evening_ritual2, advice, sleep_time, water_goal, 
                               activity_goal, created_date) 
-                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                              ON CONFLICT (user_id, plan_date) 
                              DO UPDATE SET
                                 morning_ritual1 = EXCLUDED.morning_ritual1,
@@ -340,52 +328,47 @@ def save_user_plan_to_db(user_id: int, plan_data: Dict[str, Any]):
                                 water_goal = EXCLUDED.water_goal,
                                 activity_goal = EXCLUDED.activity_goal,
                                 updated_date = EXCLUDED.created_date''',
-                          (user_id, plan_data.get('plan_date'), plan_data.get('morning_ritual1'), 
-                           plan_data.get('morning_ritual2'), plan_data.get('task1'), plan_data.get('task2'),
-                           plan_data.get('task3'), plan_data.get('task4'), plan_data.get('lunch_break'),
-                           plan_data.get('evening_ritual1'), plan_data.get('evening_ritual2'), 
-                           plan_data.get('advice'), plan_data.get('sleep_time'), plan_data.get('water_goal'),
-                           plan_data.get('activity_goal'), created_date))
+                          user_id, plan_data.get('plan_date'), plan_data.get('morning_ritual1'), 
+                          plan_data.get('morning_ritual2'), plan_data.get('task1'), plan_data.get('task2'),
+                          plan_data.get('task3'), plan_data.get('task4'), plan_data.get('lunch_break'),
+                          plan_data.get('evening_ritual1'), plan_data.get('evening_ritual2'), 
+                          plan_data.get('advice'), plan_data.get('sleep_time'), plan_data.get('water_goal'),
+                          plan_data.get('activity_goal'), created_date)
             
-            conn.commit()
             logger.info(f"✅ План сохранен в БД для пользователя {user_id}")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения плана {user_id}: {e}")
 
-def get_user_plan_from_db(user_id: int):
-    """Получает текущий план пользователя из базу данных безопасно"""
+async def get_user_plan_from_db(user_id: int):
+    """Асинхронно получает текущий план пользователя из базы данных"""
     if not POSTGRESQL_AVAILABLE:
         return None
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
+            plan = await conn.fetchrow('''SELECT * FROM user_plans 
+                             WHERE user_id = $1 AND status = 'active' 
+                             ORDER BY created_date DESC LIMIT 1''', user_id)
             
-            cursor.execute('''SELECT * FROM user_plans 
-                             WHERE user_id = %s AND status = 'active' 
-                             ORDER BY created_date DESC LIMIT 1''', (user_id,))
-            
-            plan = cursor.fetchone()
-            return plan
+            return dict(plan) if plan else None
     except Exception as e:
         logger.error(f"❌ Ошибка получения плана {user_id}: {e}")
         return None
 
-def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
-    """Сохраняет прогресс пользователя в базу данных безопасно"""
+async def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
+    """Асинхронно сохраняет прогресс пользователя в базу данных"""
     if not POSTGRESQL_AVAILABLE:
         logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем сохранение прогресса {user_id}")
         return
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             progress_date = datetime.now().date()
             
-            cursor.execute('''INSERT INTO user_progress 
+            await conn.execute('''INSERT INTO user_progress 
                              (user_id, progress_date, tasks_completed, mood, energy, sleep_quality, 
                               water_intake, activity_done, user_comment, day_rating, challenges) 
-                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                              ON CONFLICT (user_id, progress_date)
                              DO UPDATE SET
                                 tasks_completed = EXCLUDED.tasks_completed,
@@ -397,32 +380,33 @@ def save_progress_to_db(user_id: int, progress_data: Dict[str, Any]):
                                 user_comment = EXCLUDED.user_comment,
                                 day_rating = EXCLUDED.day_rating,
                                 challenges = EXCLUDED.challenges''',
-                          (user_id, progress_date, progress_data.get('tasks_completed'), 
-                           progress_data.get('mood'), progress_data.get('energy'), 
-                           progress_data.get('sleep_quality'), progress_data.get('water_intake'),
-                           progress_data.get('activity_done'), progress_data.get('user_comment'),
-                           progress_data.get('day_rating'), progress_data.get('challenges')))
+                          user_id, progress_date, progress_data.get('tasks_completed'), 
+                          progress_data.get('mood'), progress_data.get('energy'), 
+                          progress_data.get('sleep_quality'), progress_data.get('water_intake'),
+                          progress_data.get('activity_done'), progress_data.get('user_comment'),
+                          progress_data.get('day_rating'), progress_data.get('challenges'))
             
-            conn.commit()
             logger.info(f"✅ Прогресс сохранен в БД для пользователя {user_id}")
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения прогресса {user_id}: {e}")
 
-def get_user_stats(user_id: int) -> Dict[str, Any]:
-    """Возвращает статистику пользователя безопасно"""
+async def get_user_stats(user_id: int) -> Dict[str, Any]:
+    """Асинхронно возвращает статистику пользователя"""
     if not POSTGRESQL_AVAILABLE:
         return {'messages_count': 0, 'registration_date': 'База данных не доступна'}
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
+            messages_count_result = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_messages WHERE user_id = $1 AND direction = 'incoming'", 
+                user_id
+            )
+            messages_count = messages_count_result if messages_count_result else 0
             
-            cursor.execute("SELECT COUNT(*) FROM user_messages WHERE user_id = %s AND direction = 'incoming'", (user_id,))
-            messages_count_result = cursor.fetchone()
-            messages_count = messages_count_result['count'] if messages_count_result else 0
-            
-            cursor.execute("SELECT registration_date FROM clients WHERE user_id = %s", (user_id,))
-            reg_date_result = cursor.fetchone()
+            reg_date_result = await conn.fetchrow(
+                "SELECT registration_date FROM clients WHERE user_id = $1", 
+                user_id
+            )
             reg_date = reg_date_result['registration_date'] if reg_date_result else "Неизвестно"
             
             return {
@@ -433,35 +417,33 @@ def get_user_stats(user_id: int) -> Dict[str, Any]:
         logger.error(f"❌ Ошибка получения статистики {user_id}: {e}")
         return {'messages_count': 0, 'registration_date': 'Ошибка'}
 
-def has_sufficient_data(user_id: int) -> bool:
-    """Проверяет есть ли достаточно данных для статистики (минимум 3 дня) безопасно"""
+async def has_sufficient_data(user_id: int) -> bool:
+    """Асинхронно проверяет есть ли достаточно данных для статистики (минимум 3 дня)"""
     if not POSTGRESQL_AVAILABLE:
         return False
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            count = result['count'] if result else 0
-            
-            return count >= 3
+        async with get_db_connection() as conn:
+            count = await conn.fetchval(
+                "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = $1", 
+                user_id
+            )
+            return count >= 3 if count else False
     except Exception as e:
         logger.error(f"❌ Ошибка проверки данных {user_id}: {e}")
         return False
 
-def get_user_activity_streak(user_id: int) -> int:
-    """Возвращает текущую серию активных дней подряд безопасно"""
+async def get_user_activity_streak(user_id: int) -> int:
+    """Асинхронно возвращает текущую серию активных дней подряд"""
     if not POSTGRESQL_AVAILABLE:
         return 0
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT DISTINCT progress_date FROM user_progress WHERE user_id = %s ORDER BY progress_date DESC", (user_id,))
-            dates_result = cursor.fetchall()
+        async with get_db_connection() as conn:
+            dates_result = await conn.fetch(
+                "SELECT DISTINCT progress_date FROM user_progress WHERE user_id = $1 ORDER BY progress_date DESC", 
+                user_id
+            )
             dates = [row['progress_date'] for row in dates_result if row['progress_date']]
             
             if not dates:
@@ -484,38 +466,38 @@ def get_user_activity_streak(user_id: int) -> int:
         logger.error(f"❌ Ошибка получения серии {user_id}: {e}")
         return 0
 
-def get_user_main_goal(user_id: int) -> str:
-    """Получает главную цель пользователя из анкеты безопасно"""
+async def get_user_main_goal(user_id: int) -> str:
+    """Асинхронно получает главную цель пользователя из анкеты"""
     if not POSTGRESQL_AVAILABLE:
         return "База данных не доступна"
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 0", (user_id,))
-            result = cursor.fetchone()
+        async with get_db_connection() as conn:
+            result = await conn.fetchrow(
+                "SELECT answer_text FROM questionnaire_answers WHERE user_id = $1 AND question_number = 0", 
+                user_id
+            )
             return result['answer_text'] if result else "Цель не установлена"
     except Exception as e:
         logger.error(f"❌ Ошибка получения цели {user_id}: {e}")
         return "Ошибка загрузки цели"
 
-def get_user_level_info(user_id: int) -> Dict[str, Any]:
-    """Возвращает информацию об уровне пользователя безопасно"""
+async def get_user_level_info(user_id: int) -> Dict[str, Any]:
+    """Асинхронно возвращает информацию об уровне пользователя"""
     if not POSTGRESQL_AVAILABLE:
         return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
+            active_days = await conn.fetchval(
+                "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = $1", 
+                user_id
+            ) or 0
             
-            cursor.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", (user_id,))
-            active_days_result = cursor.fetchone()
-            active_days = active_days_result['count'] if active_days_result else 0
-            
-            cursor.execute("SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = %s", (user_id,))
-            total_tasks_result = cursor.fetchone()
-            total_tasks = total_tasks_result['sum'] if total_tasks_result else 0
+            total_tasks = await conn.fetchval(
+                "SELECT SUM(tasks_completed) FROM user_progress WHERE user_id = $1", 
+                user_id
+            ) or 0
             
             level_points = active_days * 10 + total_tasks * 2
             level_names = {
@@ -556,18 +538,18 @@ def get_user_level_info(user_id: int) -> Dict[str, Any]:
         logger.error(f"❌ Ошибка получения уровня {user_id}: {e}")
         return {'level': 'Новичок', 'points': 0, 'points_to_next': 50, 'next_level_points': 50}
 
-def get_favorite_ritual(user_id: int) -> str:
-    """Определяет любимый ритуал пользователя безопасно"""
+async def get_favorite_ritual(user_id: int) -> str:
+    """Асинхронно определяет любимый ритуал пользователя"""
     if not POSTGRESQL_AVAILABLE:
         return "на основе ваших предпочтений"
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
+        async with get_db_connection() as conn:
             # Используем номер вопроса из анкеты для ритуалов
-            cursor.execute("SELECT answer_text FROM questionnaire_answers WHERE user_id = %s AND question_number = 32", (user_id,))
-            result = cursor.fetchone()
+            result = await conn.fetchrow(
+                "SELECT answer_text FROM questionnaire_answers WHERE user_id = $1 AND question_number = 32", 
+                user_id
+            )
             
             if result:
                 rituals_text = result['answer_text'].lower() if result['answer_text'] else ""
@@ -588,17 +570,17 @@ def get_favorite_ritual(user_id: int) -> str:
         logger.error(f"❌ Ошибка получения ритуала {user_id}: {e}")
         return "на основе ваших предпочтений"
 
-def get_user_usage_days(user_id: int) -> Dict[str, int]:
-    """Возвращает статистику дней использования безопасно"""
+async def get_user_usage_days(user_id: int) -> Dict[str, int]:
+    """Асинхронно возвращает статистику дней использования"""
     if not POSTGRESQL_AVAILABLE:
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT registration_date FROM clients WHERE user_id = %s", (user_id,))
-            reg_result = cursor.fetchone()
+        async with get_db_connection() as conn:
+            reg_result = await conn.fetchrow(
+                "SELECT registration_date FROM clients WHERE user_id = $1", 
+                user_id
+            )
             
             if not reg_result:
                 return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
@@ -606,11 +588,12 @@ def get_user_usage_days(user_id: int) -> Dict[str, int]:
             reg_date = reg_result['registration_date'].date()
             days_since_registration = (datetime.now().date() - reg_date).days + 1
             
-            cursor.execute("SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = %s", (user_id,))
-            active_days_result = cursor.fetchone()
-            active_days = active_days_result['count'] if active_days_result else 0
+            active_days = await conn.fetchval(
+                "SELECT COUNT(DISTINCT progress_date) FROM user_progress WHERE user_id = $1", 
+                user_id
+            ) or 0
             
-            current_streak = get_user_activity_streak(user_id)
+            current_streak = await get_user_activity_streak(user_id)
             
             return {
                 'days_since_registration': days_since_registration,
@@ -622,18 +605,16 @@ def get_user_usage_days(user_id: int) -> Dict[str, int]:
         logger.error(f"❌ Ошибка получения дней использования {user_id}: {e}")
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
 
-# ========== ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ==========
+# ========== АСИНХРОННЫЕ ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ==========
 
-def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
-    """Добавляет напоминание в базу данных - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+async def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
+    """Асинхронно добавляет напоминание в базу данных"""
     if not POSTGRESQL_AVAILABLE:
         logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем добавление напоминания {user_id}")
         return False
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
+        async with get_db_connection() as conn:
             # 🔧 ОБРАБОТКА ОТНОСИТЕЛЬНЫХ НАПОМИНАНИЙ
             if reminder_data.get('type') == 'once' and 'delay_minutes' in reminder_data:
                 # Для относительных напоминаний вычисляем точное время
@@ -644,13 +625,12 @@ def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
             days_str = ','.join(reminder_data['days']) if reminder_data['days'] else 'ежедневно'
             created_date = datetime.now()
             
-            cursor.execute('''INSERT INTO user_reminders 
+            await conn.execute('''INSERT INTO user_reminders 
                              (user_id, reminder_text, reminder_time, days_of_week, reminder_type, created_date)
-                             VALUES (%s, %s, %s, %s, %s, %s)''',
-                          (user_id, reminder_data['text'], reminder_time, 
-                           days_str, reminder_data['type'], created_date))
+                             VALUES ($1, $2, $3, $4, $5, $6)''',
+                          user_id, reminder_data['text'], reminder_time, 
+                          days_str, reminder_data['type'], created_date)
             
-            conn.commit()
             logger.info(f"✅ Напоминание добавлено для пользователя {user_id} на {reminder_time}")
             return True
             
@@ -658,22 +638,23 @@ def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
         logger.error(f"❌ Ошибка добавления напоминания: {e}")
         return False
 
-def get_user_reminders(user_id: int) -> List[Dict]:
-    """Возвращает список напоминаний пользователя безопасно"""
+async def get_user_reminders(user_id: int) -> List[Dict]:
+    """Асинхронно возвращает список напоминаний пользователя"""
     if not POSTGRESQL_AVAILABLE:
         return []
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
-                             FROM user_reminders 
-                             WHERE user_id = %s AND is_active = TRUE 
-                             ORDER BY created_date DESC''', (user_id,))
+        async with get_db_connection() as conn:
+            reminders_result = await conn.fetch(
+                '''SELECT id, reminder_text, reminder_time, days_of_week, reminder_type 
+                 FROM user_reminders 
+                 WHERE user_id = $1 AND is_active = TRUE 
+                 ORDER BY created_date DESC''', 
+                user_id
+            )
             
             reminders = []
-            for row in cursor.fetchall():
+            for row in reminders_result:
                 reminders.append({
                     'id': row['id'],
                     'text': row['reminder_text'],
@@ -687,18 +668,15 @@ def get_user_reminders(user_id: int) -> List[Dict]:
         logger.error(f"❌ Ошибка получения напоминаний {user_id}: {e}")
         return []
 
-def delete_reminder_from_db(reminder_id: int) -> bool:
-    """Удаляет напоминание по ID безопасно"""
+async def delete_reminder_from_db(reminder_id: int) -> bool:
+    """Асинхронно удаляет напоминание по ID"""
     if not POSTGRESQL_AVAILABLE:
         return False
     
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
+            await conn.execute('''UPDATE user_reminders SET is_active = FALSE WHERE id = $1''', reminder_id)
             
-            cursor.execute('''UPDATE user_reminders SET is_active = FALSE WHERE id = %s''', (reminder_id,))
-            
-            conn.commit()
             logger.info(f"✅ Напоминание {reminder_id} удалено")
             return True
             
@@ -706,8 +684,14 @@ def delete_reminder_from_db(reminder_id: int) -> bool:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
-# Вызываем инициализацию при импорте модуля только если БД доступна
-if POSTGRESQL_AVAILABLE:
-    init_database()
-else:
-    logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
+# Асинхронная инициализация БД при старте
+async def initialize_database():
+    """Асинхронно инициализирует базу данных при старте приложения"""
+    if POSTGRESQL_AVAILABLE:
+        success = await init_database()
+        if success:
+            logger.info("✅ База данных успешно инициализирована")
+        else:
+            logger.error("❌ Ошибка инициализации базы данных")
+    else:
+        logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
