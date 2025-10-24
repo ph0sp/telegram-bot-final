@@ -9,25 +9,21 @@ logger = logging.getLogger(__name__)
 
 async def handle_all_messages(update: Update, context: CallbackContext):
     """Обрабатывает все текстовые сообщения включая кнопки"""
-    
-    # УСИЛЕННАЯ ПРОВЕРКА: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
-    # Ключи, которые указывают на активную анкету:
-    # - 'current_question' >= 0 (в процессе вопросов)
-    # - 'current_question' == -1 (ждут подтверждения готовности) 
-    # - 'assistant_gender' и 'assistant_name' (выбрали пол, но еще не начали анкету)
-    questionnaire_keys = ['current_question', 'assistant_gender', 'assistant_name', 'greeting_emoji', 'questionnaire_started']
-    
-    has_questionnaire_keys = context.user_data and any(key in context.user_data for key in questionnaire_keys)
-    
-    if has_questionnaire_keys:
-        current_question = context.user_data.get('current_question', -2)
-        logger.info(f"⏩ Пропускаем сообщение в состоянии анкеты (вопрос {current_question}): {update.message.text}")
-        return
-    
     user_id = update.effective_user.id
     message_text = update.message.text
 
-    # Сохраняем входящее сообщение
+    # УСИЛЕННАЯ ПРОВЕРКА: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
+    # Проверяем конкретные состояния анкеты:
+    current_question = context.user_data.get('current_question', -2)
+    has_assistant_data = context.user_data.get('assistant_gender') or context.user_data.get('assistant_name')
+    questionnaire_started = context.user_data.get('questionnaire_started', False)
+    
+    # Если пользователь в ЛЮБОМ из этих состояний анкеты - пропускаем обработку
+    if current_question >= -1 or has_assistant_data or questionnaire_started:
+        logger.info(f"⏩ Пропускаем сообщение в состоянии анкеты (вопрос {current_question}): {message_text}")
+        return
+    
+    # Только если пользователь НЕ в анкете - продолжаем обработку
     save_message(user_id, message_text, 'incoming')
     update_user_activity(user_id)
 
