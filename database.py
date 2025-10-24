@@ -691,46 +691,7 @@ def delete_reminder_from_db(reminder_id: int) -> bool:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
-# ========== ВОССТАНОВЛЕНИЕ АНКЕТЫ ==========
-
-def restore_questionnaire_state(user_id: int) -> Dict[str, Any]:
-    """Восстанавливает состояние анкеты пользователя из PostgreSQL"""
-    if not POSTGRESQL_AVAILABLE:
-        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-    
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем все ответы пользователя
-            cursor.execute('''
-                SELECT question_number, answer_text 
-                FROM questionnaire_answers 
-                WHERE user_id = %s 
-                ORDER BY question_number
-            ''', (user_id,))
-            
-            answers_data = cursor.fetchall()
-            answers = {}
-            for row in answers_data:
-                answers[row['question_number']] = row['answer_text']
-            
-            if answers:
-                # Определяем текущий вопрос
-                last_question = max(answers.keys())
-                current_question = last_question + 1 if last_question < len(QUESTIONS) - 1 else last_question
-                
-                return {
-                    'current_question': current_question,
-                    'answers': answers,
-                    'has_previous_answers': True
-                }
-            
-            return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка БД при восстановлении анкеты {user_id}: {e}")
-        return {'current_question': 0, 'answers': {}, 'has_previous_answers': False}
+# УДАЛЕНО: Функция restore_questionnaire_state и весь функционал восстановления анкеты
 
 # Вызываем инициализацию при импорте модуля только если БД доступна
 if POSTGRESQL_AVAILABLE:
