@@ -25,8 +25,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_user_info(user_id, user.username, user.first_name, user.last_name)
     update_user_activity(user_id)
     
-    # УДАЛЕНО: Восстановление анкеты - теперь всегда начинаем заново
-    
     # КНОПКИ С ВАШИМИ СМАЙЛИКАМИ
     keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -100,17 +98,11 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
     context.user_data['current_question'] = 0
     context.user_data['answers'] = {}  # Очищаем ответы на случай перезапуска
     
-    # Отправляем вступительное сообщение и ПЕРВЫЙ вопрос ОДНИМ сообщением
-    await update.message.reply_text(
-        "Давайте начнем!\n"
-        "Последовательно отвечайте на вопросы в свободной форме, как вам удобно.\n"
-        "Начнем с самого главного\n\n"
-        "Блок 1: Цель и главный фокус\n\n" +
-        QUESTIONS[0]
-    )
+    # ВАЖНО: Отправляем только ПЕРВЫЙ вопрос из списка QUESTIONS БЕЗ дублирования текста
+    await update.message.reply_text(QUESTIONS[0])
     
-    logger.info(f"🔁 Начинаем вопросы анкеты с вопроса 0, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
-    return READY_CONFIRMATION
+    logger.info(f"🔁 Начинаем вопросы анкеты с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
+    return QUESTIONNAIRE  # ВАЖНО: меняем состояние на QUESTIONNAIRE!
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
@@ -132,8 +124,8 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data['current_question'] = next_question
         await update.message.reply_text(QUESTIONS[next_question])
         
-        logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
-        return READY_CONFIRMATION
+        logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
+        return QUESTIONNAIRE  # ВАЖНО: используем QUESTIONNAIRE для всех вопросов
     else:
         # Анкета завершена
         logger.info(f"✅ Анкета завершена для пользователя {user_id}")
@@ -217,7 +209,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"❌ Ошибка отправки кнопки ответа: {e}")
     
-    # Сообщение пользователю
+    # Сообщение пользователю с меню
     keyboard = [
         ['📊 Прогресс', '👤 Профиль'],
         ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -256,5 +248,3 @@ async def cancel(update: Update, context: CallbackContext) -> int:
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
-
-# УДАЛЕНО: Функция handle_continue_choice и весь функционал восстановления анкеты
