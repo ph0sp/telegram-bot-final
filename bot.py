@@ -247,12 +247,21 @@ async def main():
         raise
 
 if __name__ == "__main__":
+    import asyncio
+    import sys
+    
+    # Для Linux систем используем uvloop если доступен
+    if sys.platform != "win32":
+        try:
+            import uvloop
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        except ImportError:
+            pass
+    
+    # Простой и надежный запуск
     try:
-        # Используем низкоуровневый подход для обхода проблемы
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен")
     except Exception as e:
         logging.error(f"❌ Ошибка запуска бота: {e}")
-    finally:
-        loop.close()
