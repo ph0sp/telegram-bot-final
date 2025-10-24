@@ -246,6 +246,9 @@ async def main():
         logger.error(f"❌ Запуск бота не удался: {e}")
         raise
 
-if __name__ == '__main__':
-    # Запуск асинхронной main функции
-    asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        # Запускаем асинхронную функцию main
+        asyncio.run(main())
+    except Exception as e:
+        logging.error(f"❌ Ошибка запуска бота: {e}")
