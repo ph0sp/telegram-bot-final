@@ -2,11 +2,21 @@ import os
 import logging
 from dotenv import load_dotenv
 
+# ========== БЕЗОПАСНОЕ ОБЪЕДИНЕНИЕ ПУТЕЙ ==========
+
+def safe_path_join(base_dir, filename):
+    """Безопасное объединение путей"""
+    if not filename:
+        raise ValueError("Имя файла не может быть пустым")
+    if '..' in filename or filename.startswith('/') or '~' in filename:
+        raise ValueError(f"Недопустимое имя файла: {filename}")
+    return os.path.join(base_dir, filename)
+
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 
 # Абсолютный путь к .env файлу (исправляет проблему с путями)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_PATH = os.path.join(BASE_DIR, '.env')
+ENV_PATH = safe_path_join(BASE_DIR, '.env')
 
 load_dotenv(ENV_PATH)
 
@@ -16,7 +26,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[
-        logging.FileHandler(os.path.join(BASE_DIR, 'bot.log')),
+        logging.FileHandler(safe_path_join(BASE_DIR, 'bot.log')),
         logging.StreamHandler()
     ]
 )
@@ -43,6 +53,14 @@ if not YOUR_CHAT_ID:
     logger.error("❌ Chat ID не найден! Установите YOUR_CHAT_ID в .env файле")
     exit(1)
 
+# Валидация YOUR_CHAT_ID как числа
+try:
+    YOUR_CHAT_ID = int(YOUR_CHAT_ID)
+    logger.info(f"✅ Chat ID валиден: {YOUR_CHAT_ID}")
+except (ValueError, TypeError):
+    logger.error("❌ YOUR_CHAT_ID должен быть числом!")
+    exit(1)
+
 if not DATABASE_URL:
     logger.error("❌ DATABASE_URL не найден! Установите DATABASE_URL в .env файле")
     exit(1)
@@ -54,17 +72,23 @@ GOOGLE_SHEETS_AVAILABLE = False
 if GOOGLE_SHEETS_ID and GOOGLE_CREDENTIALS_JSON:
     try:
         # Проверяем существование файла с credentials
-        creds_file_path = os.path.join(BASE_DIR, GOOGLE_CREDENTIALS_JSON)
+        creds_file_path = safe_path_join(BASE_DIR, GOOGLE_CREDENTIALS_JSON)
         logger.info(f"🔍 Ищем файл credentials по пути: {creds_file_path}")
         
-        if os.path.exists(creds_file_path):
+        # Улучшенная проверка файла
+        if not creds_file_path.endswith('.json'):
+            logger.error(f"❌ Файл credentials должен быть JSON: {creds_file_path}")
+        elif os.path.exists(creds_file_path):
             GOOGLE_SHEETS_AVAILABLE = True
             logger.info("✅ Google Sheets credentials файл найден")
         else:
             logger.warning(f"⚠️ Файл {GOOGLE_CREDENTIALS_JSON} не найден по пути: {creds_file_path}")
             # Покажем какие файлы есть в папке
-            existing_files = [f for f in os.listdir(BASE_DIR) if f.endswith('.json')]
-            logger.info(f"📁 Найденные JSON файлы: {existing_files}")
+            try:
+                existing_files = [f for f in os.listdir(BASE_DIR) if f.endswith('.json')]
+                logger.info(f"📁 Найденные JSON файлы: {existing_files}")
+            except Exception as list_error:
+                logger.error(f"❌ Ошибка при чтении директории: {list_error}")
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки Google credentials: {e}")
 else:
@@ -428,3 +452,49 @@ WEEKLY_TEMPLATE_SCHEDULE = {
     "суббота": "спортивный_день",
     "воскресенье": "баланс_работа_отдых"
 }
+
+# ========== ПРОВЕРКА КОНФИГУРАЦИИ ==========
+
+def validate_config():
+    """Проверка корректности конфигурации при старте"""
+    
+    # Проверка PLAN_FIELDS
+    required_fields = ['id', 'user_id', 'plan_date', 'morning_ritual1', 'task1']
+    for field in required_fields:
+        if field not in PLAN_FIELDS:
+            logger.error(f"❌ Отсутствует обязательное поле в PLAN_FIELDS: {field}")
+            return False
+    
+    # Проверка шаблонов
+    required_template_keys = ['name', 'description', 'strategic_tasks', 'critical_tasks']
+    for template_name, template in PLAN_TEMPLATES.items():
+        for key in required_template_keys:
+            if key not in template:
+                logger.error(f"❌ В шаблоне '{template_name}' отсутствует ключ: {key}")
+                return False
+    
+    # Проверка расписания
+    days_of_week = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    for day in days_of_week:
+        if day not in WEEKLY_TEMPLATE_SCHEDULE:
+            logger.error(f"❌ Отсутствует день недели в расписании: {day}")
+            return False
+        if WEEKLY_TEMPLATE_SCHEDULE[day] not in PLAN_TEMPLATES:
+            logger.error(f"❌ Неизвестный шаблон для дня '{day}': {WEEKLY_TEMPLATE_SCHEDULE[day]}")
+            return False
+    
+    # Проверка количества вопросов анкеты
+    expected_questions_count = 39  # Актуальное количество вопросов
+    if len(QUESTIONS) != expected_questions_count:
+        logger.error(f"❌ Неверное количество вопросов: {len(QUESTIONS)}, ожидалось: {expected_questions_count}")
+        return False
+    
+    logger.info("✅ Конфигурация прошла валидацию")
+    return True
+
+# Вызов проверки при импорте
+if not validate_config():
+    logger.error("❌ Ошибка валидации конфигурации!")
+    exit(1)
+
+logger.info("✅ Модуль config.py успешно загружен и проверен")
