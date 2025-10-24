@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 async def remind_me_command(update: Update, context: CallbackContext):
     """Установка разового напоминания"""
     user_id = update.effective_user.id
+    await update_user_activity(user_id)
     
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
@@ -60,7 +61,7 @@ async def remind_me_command(update: Update, context: CallbackContext):
         'days': []
     }
     
-    success = add_reminder_to_db(user_id, reminder_data)
+    success = await add_reminder_to_db(user_id, reminder_data)
     
     if success:
         await update.message.reply_text(
@@ -74,6 +75,7 @@ async def remind_me_command(update: Update, context: CallbackContext):
 async def regular_remind_command(update: Update, context: CallbackContext):
     """Установка регулярного напоминания"""
     user_id = update.effective_user.id
+    await update_user_activity(user_id)
     
     if not context.args or len(context.args) < 3:
         await update.message.reply_text(
@@ -142,7 +144,7 @@ async def regular_remind_command(update: Update, context: CallbackContext):
         'days': days
     }
     
-    success = add_reminder_to_db(user_id, reminder_data)
+    success = await add_reminder_to_db(user_id, reminder_data)
     
     if success:
         days_display = ', '.join(days) if days != ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'] else 'ежедневно'
@@ -158,8 +160,9 @@ async def regular_remind_command(update: Update, context: CallbackContext):
 async def my_reminders_command(update: Update, context: CallbackContext):
     """Показывает активные напоминания"""
     user_id = update.effective_user.id
+    await update_user_activity(user_id)
     
-    reminders = get_user_reminders(user_id)
+    reminders = await get_user_reminders(user_id)
     
     if not reminders:
         await update.message.reply_text(
@@ -189,6 +192,7 @@ async def my_reminders_command(update: Update, context: CallbackContext):
 async def delete_remind_command(update: Update, context: CallbackContext):
     """Удаляет напоминание"""
     user_id = update.effective_user.id
+    await update_user_activity(user_id)
     
     if not context.args:
         await update.message.reply_text(
@@ -201,7 +205,7 @@ async def delete_remind_command(update: Update, context: CallbackContext):
     
     try:
         reminder_id = int(context.args[0])
-        success = delete_reminder_from_db(reminder_id)
+        success = await delete_reminder_from_db(reminder_id)
         
         if success:
             await update.message.reply_text(
@@ -222,11 +226,12 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
     """Обрабатывает естественные запросы на напоминания"""
     user_id = update.effective_user.id
     message_text = update.message.text
+    await update_user_activity(user_id)
     
     logger.info(f"🔍 Обработка естественного запроса: {message_text}")
     
     # Проверяем лимит напоминаний (максимум 20 на пользователя)
-    reminders = get_user_reminders(user_id)
+    reminders = await get_user_reminders(user_id)
     if len(reminders) >= 20:
         await update.message.reply_text(
             "❌ Достигнут лимит напоминаний (20).\n"
@@ -249,7 +254,7 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
         return
     
     # Добавляем напоминание в базу
-    success = add_reminder_to_db(user_id, reminder_data)
+    success = await add_reminder_to_db(user_id, reminder_data)
     
     if success:
         if reminder_data['type'] == 'regular':
@@ -273,7 +278,7 @@ async def handle_reminder_nlp(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ Не удалось установить напоминание")
 
 async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет напоминания пользователям безопасно"""
+    """Отправляет напоминания пользователям безопасно (АСИНХРОННАЯ)"""
     try:
         # Получаем текущее время и день недели
         now = datetime.now()
@@ -285,22 +290,15 @@ async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
         }
         current_day = day_translation.get(current_day_rus, 'пн')
         
-        conn = get_db_connection()
-        if not conn:
-            return
-            
-        try:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             # Ищем напоминания для текущего времени
-            cursor.execute('''
+            reminders = await conn.fetch('''
                 SELECT ur.id, ur.user_id, ur.reminder_text, c.first_name, ur.reminder_type
                 FROM user_reminders ur 
                 JOIN clients c ON ur.user_id = c.user_id 
-                WHERE ur.is_active = TRUE AND ur.reminder_time = %s 
-                AND (ur.days_of_week LIKE %s OR ur.days_of_week = 'ежедневно' OR ur.days_of_week = '')
-            ''', (current_time, f'%{current_day}%'))
-            
-            reminders = cursor.fetchall()
+                WHERE ur.is_active = TRUE AND ur.reminder_time = $1 
+                AND (ur.days_of_week LIKE $2 OR ur.days_of_week = 'ежедневно' OR ur.days_of_week = '')
+            ''', current_time, f'%{current_day}%')
             
             for reminder in reminders:
                 reminder_id = reminder['id']
@@ -318,21 +316,15 @@ async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
                     
                     # Если это разовое напоминание - деактивируем его
                     if reminder_type == 'once':
-                        cursor.execute(
-                            'UPDATE user_reminders SET is_active = FALSE WHERE id = %s',
-                            (reminder_id,)
+                        await conn.execute(
+                            'UPDATE user_reminders SET is_active = FALSE WHERE id = $1',
+                            reminder_id
                         )
-                        conn.commit()
                         logger.info(f"📝 Разовое напоминание {reminder_id} деактивировано")
                         
                 except Exception as e:
                     logger.error(f"❌ Ошибка отправки напоминания {user_id}: {e}")
                     
-        except Exception as e:
-            logger.error(f"❌ Ошибка в send_reminder_job: {e}")
-        finally:
-            if conn:
-                conn.close()
     except Exception as e:
         logger.error(f"❌ Ошибка в send_reminder_job: {e}")
 
@@ -603,115 +595,101 @@ def schedule_reminders(application):
 
 # Функции для автоматических сообщений (они также относятся к напоминаниям)
 async def send_morning_plan(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет утренний план пользователям"""
+    """Отправляет утренний план пользователям (АСИНХРОННАЯ)"""
     from services.google_sheets import get_daily_plan_from_sheets
     
-    conn = get_db_connection()
-    if not conn:
-        return
-        
     try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT user_id, first_name, username FROM clients WHERE status = 'active'"
-        )
-        users = cursor.fetchall()
-        
-        for user in users:
-            user_id = user['user_id']
-            first_name = user['first_name']
-            today = datetime.now().strftime("%Y-%m-%d")
+        async with get_db_connection() as conn:
+            users = await conn.fetch(
+                "SELECT user_id, first_name, username FROM clients WHERE status = 'active'"
+            )
             
-            # Получаем план из Google Sheets
-            plan_data = get_daily_plan_from_sheets(user_id, today)
+            for user in users:
+                user_id = user['user_id']
+                first_name = user['first_name']
+                today = datetime.now().strftime("%Y-%m-%d")
+                
+                # Получаем план из Google Sheets
+                plan_data = get_daily_plan_from_sheets(user_id, today)
+                
+                if plan_data:
+                    # Формируем сообщение
+                    message = f"🌅 Доброе утро, {first_name}!\n\n"
+                    message += "📋 Ваш план на сегодня:\n\n"
+                    
+                    if plan_data.get('strategic_tasks'):
+                        message += "🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
+                        for task in plan_data['strategic_tasks']:
+                            message += f"• {task}\n"
+                        message += "\n"
+                    
+                    if plan_data.get('critical_tasks'):
+                        message += "⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
+                        for task in plan_data['critical_tasks']:
+                            message += f"• {task}\n"
+                        message += "\n"
+                    
+                    if plan_data.get('priorities'):
+                        message += "🎯 ПРИОРИТЕТЫ ДНЯ:\n"
+                        for priority in plan_data['priorities']:
+                            message += f"• {priority}\n"
+                        message += "\n"
+                    
+                    if plan_data.get('advice'):
+                        message += "💡 СОВЕТЫ АССИСТЕНТА:\n"
+                        for advice in plan_data['advice']:
+                            message += f"• {advice}\n"
+                        message += "\n"
+                    
+                    if plan_data.get('motivation_quote'):
+                        message += f"💫 МОТИВАЦИЯ: {plan_data['motivation_quote']}\n\n"
+                    
+                    message += "💪 Удачи в достижении ваших целей!"
+                    
+                    try:
+                        await context.bot.send_message(chat_id=user_id, text=message)
+                        logger.info(f"✅ Утренний план отправлен пользователю {user_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка отправки утреннего плана пользователю {user_id}: {e}")
+                        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в send_morning_plan: {e}")
+
+async def send_evening_survey(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет вечерний опрос пользователям (АСИНХРОННАЯ)"""
+    try:
+        async with get_db_connection() as conn:
+            users = await conn.fetch(
+                "SELECT user_id, first_name FROM clients WHERE status = 'active'"
+            )
             
-            if plan_data:
-                # Формируем сообщение
-                message = f"🌅 Доброе утро, {first_name}!\n\n"
-                message += "📋 Ваш план на сегодня:\n\n"
+            for user in users:
+                user_id = user['user_id']
+                first_name = user['first_name']
                 
-                if plan_data.get('strategic_tasks'):
-                    message += "🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
-                    for task in plan_data['strategic_tasks']:
-                        message += f"• {task}\n"
-                    message += "\n"
-                
-                if plan_data.get('critical_tasks'):
-                    message += "⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
-                    for task in plan_data['critical_tasks']:
-                        message += f"• {task}\n"
-                    message += "\n"
-                
-                if plan_data.get('priorities'):
-                    message += "🎯 ПРИОРИТЕТЫ ДНЯ:\n"
-                    for priority in plan_data['priorities']:
-                        message += f"• {priority}\n"
-                    message += "\n"
-                
-                if plan_data.get('advice'):
-                    message += "💡 СОВЕТЫ АССИСТЕНТА:\n"
-                    for advice in plan_data['advice']:
-                        message += f"• {advice}\n"
-                    message += "\n"
-                
-                if plan_data.get('motivation_quote'):
-                    message += f"💫 МОТИВАЦИЯ: {plan_data['motivation_quote']}\n\n"
-                
-                message += "💪 Удачи в достижении ваших целей!"
+                message = (
+                    f"🌙 Добрый вечер, {first_name}!\n\n"
+                    "📊 Как прошел ваш день?\n\n"
+                    "1. 🎯 Выполнили стратегические задачи? (да/нет/частично)\n"
+                    "2. 🌅 Выполнили утренние ритуалы? (да/нет/частично)\n"
+                    "3. 🌙 Выполнили вечерние ритуалы? (да/нет/частично)\n"
+                    "4. 😊 Настроение от 1 до 10?\n"
+                    "5. ⚡ Энергия от 1 до 10?\n"
+                    "6. 🎯 Уровень фокуса от 1 до 10?\n"
+                    "7. 🔥 Уровень мотивации от 1 до 10?\n"
+                    "8. 🏆 Ключевые достижения сегодня?\n"
+                    "9. 🚧 Были проблемы или препятствия?\n"
+                    "10. 🌟 Что получилось хорошо?\n"
+                    "11. 📈 Что можно улучшить?\n"
+                    "12. 🔄 Корректировки на завтра?\n"
+                    "13. 💧 Сколько воды выпили? (стаканов)\n\n"
+                )
                 
                 try:
                     await context.bot.send_message(chat_id=user_id, text=message)
-                    logger.info(f"✅ Утренний план отправлен пользователю {user_id}")
+                    logger.info(f"✅ Вечерний опрос отправлен пользователю {user_id}")
                 except Exception as e:
-                    logger.error(f"❌ Ошибка отправки утреннего плана пользователю {user_id}: {e}")
+                    logger.error(f"❌ Ошибка отправки вечернего опроса пользователю {user_id}: {e}")
                     
     except Exception as e:
-        logger.error(f"❌ Ошибка в send_morning_plan: {e}")
-    finally:
-        conn.close()
-
-async def send_evening_survey(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет вечерний опрос пользователям"""
-    conn = get_db_connection()
-    if not conn:
-        return
-        
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT user_id, first_name FROM clients WHERE status = 'active'"
-        )
-        users = cursor.fetchall()
-        
-        for user in users:
-            user_id = user['user_id']
-            first_name = user['first_name']
-            
-            message = (
-                f"🌙 Добрый вечер, {first_name}!\n\n"
-                "📊 Как прошел ваш день?\n\n"
-                "1. 🎯 Выполнили стратегические задачи? (да/нет/частично)\n"
-                "2. 🌅 Выполнили утренние ритуалы? (да/нет/частично)\n"
-                "3. 🌙 Выполнили вечерние ритуалы? (да/нет/частично)\n"
-                "4. 😊 Настроение от 1 до 10?\n"
-                "5. ⚡ Энергия от 1 до 10?\n"
-                "6. 🎯 Уровень фокуса от 1 до 10?\n"
-                "7. 🔥 Уровень мотивации от 1 до 10?\n"
-                "8. 🏆 Ключевые достижения сегодня?\n"
-                "9. 🚧 Были проблемы или препятствия?\n"
-                "10. 🌟 Что получилось хорошо?\n"
-                "11. 📈 Что можно улучшить?\n"
-                "12. 🔄 Корректировки на завтра?\n"
-                "13. 💧 Сколько воды выпили? (стаканов)\n\n"
-            )
-            
-            try:
-                await context.bot.send_message(chat_id=user_id, text=message)
-                logger.info(f"✅ Вечерний опрос отправлен пользователю {user_id}")
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки вечернего опроса пользователю {user_id}: {e}")
-                
-    except Exception as e:
         logger.error(f"❌ Ошибка в send_evening_survey: {e}")
-    finally:
-        conn.close()
