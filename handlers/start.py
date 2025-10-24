@@ -6,11 +6,9 @@ from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 from config import QUESTIONS, YOUR_CHAT_ID, logger, GENDER, READY_CONFIRMATION, QUESTIONNAIRE
 from database import (
     save_user_info, update_user_activity, check_user_registered,
-    save_questionnaire_answer, save_message, get_db_connection
+    save_questionnaire_answer, save_message
 )
 from services.google_sheets import save_client_to_sheets
-
-# Убрали дублирование logger - используем из config
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /start - начинает анкету заново каждый раз"""
@@ -23,10 +21,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Полностью очищаем данные предыдущей анкеты
         context.user_data.clear()
         
-        # Сохраняем пользователя с обработкой ошибок
+        # Сохраняем пользователя с обработкой ошибок (АСИНХРОННО)
         try:
-            save_user_info(user_id, user.username, user.first_name, user.last_name)
-            update_user_activity(user_id)
+            await save_user_info(user_id, user.username, user.first_name, user.last_name)
+            await update_user_activity(user_id)
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
             # Продолжаем работу, так как это не критично для анкеты
@@ -155,9 +153,9 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         current_question = context.user_data.get('current_question', 0)
         logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
         
-        # Сохраняем ответ на текущий вопрос с обработкой ошибок
+        # Сохраняем ответ на текущий вопрос с обработкой ошибок (АСИНХРОННО)
         try:
-            save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
+            await save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
             context.user_data['answers'][current_question] = answer_text
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения ответа пользователя {user_id}: {e}")
