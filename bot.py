@@ -248,11 +248,10 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        # Используем низкоуровневый подход для обхода проблемы с event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
+        # Простой синхронный запуск
+        import asyncio
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Бот остановлен пользователем")
     except Exception as e:
-        logging.error(f"❌ Ошибка запуска бота: {e}")
-    finally:
-        loop.close()
+        logger.error(f"❌ Запуск бота не удался: {e}")
