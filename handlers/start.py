@@ -12,10 +12,25 @@ from services.google_sheets import save_client_to_sheets
 
 logger = logging.getLogger(__name__)
 
+# Словарь для отслеживания уже обработанных сообщений
+processed_messages = set()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /start - начинает анкету заново каждый раз"""
     user = update.effective_user
     user_id = user.id
+    message_id = update.message.message_id
+    
+    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: проверяем, не обрабатывали ли мы это сообщение
+    message_key = f"{user_id}_{message_id}"
+    if message_key in processed_messages:
+        logger.warning(f"🚨 ДУБЛИРОВАНИЕ: сообщение {message_key} уже обработано")
+        return ConversationHandler.END
+    
+    processed_messages.add(message_key)
+    # Очищаем старые записи (оставляем только последние 100)
+    if len(processed_messages) > 100:
+        processed_messages.clear()
     
     logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
     
@@ -38,7 +53,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     
     # Инициализируем данные для НОВОЙ анкеты
-    context.user_data['current_question'] = -1  # -1 означает этап "Готовы начать?"
+    context.user_data['current_question'] = -1
     context.user_data['answers'] = {}
     context.user_data['questionnaire_started'] = True
     
@@ -50,6 +65,15 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     """Обработчик выбора пола ассистента"""
     user_id = update.effective_user.id
     user_text = update.message.text
+    message_id = update.message.message_id
+    
+    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ
+    message_key = f"{user_id}_{message_id}"
+    if message_key in processed_messages:
+        logger.warning(f"🚨 ДУБЛИРОВАНИЕ: сообщение {message_key} уже обработано в gender_choice")
+        return READY_CONFIRMATION
+    
+    processed_messages.add(message_key)
     
     logger.info(f"🎭 Пользователь {user_id} выбрал: {user_text}")
     
@@ -69,7 +93,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     logger.info(f"✅ Выбран пол: {gender}, ассистент: {assistant_name}")
     
-    # Приветствие как в вашем примере
+    # Приветствие как в вашем примере - ОДИН РАЗ
     await update.message.reply_text(
         f'{greeting_emoji} Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
         f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -91,23 +115,45 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
     """Обработчик подтверждения готовности начать анкету"""
     user_id = update.effective_user.id
     answer_text = update.message.text
+    message_id = update.message.message_id
+    
+    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ
+    message_key = f"{user_id}_{message_id}"
+    if message_key in processed_messages:
+        logger.warning(f"🚨 ДУБЛИРОВАНИЕ: сообщение {message_key} уже обработано в handle_ready_confirmation")
+        return QUESTIONNAIRE
+    
+    processed_messages.add(message_key)
     
     logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
     
     # Любой ответ считается согласием - начинаем анкету ЗАНОВО
     context.user_data['current_question'] = 0
-    context.user_data['answers'] = {}  # Очищаем ответы на случай перезапуска
+    context.user_data['answers'] = {}
     
-    # ВАЖНО: Отправляем только ПЕРВЫЙ вопрос из списка QUESTIONS БЕЗ дублирования текста
+    # Отправляем ПЕРВЫЙ вопрос БЕЗ дублирования текста
     await update.message.reply_text(QUESTIONS[0])
     
     logger.info(f"🔁 Начинаем вопросы анкеты с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
-    return QUESTIONNAIRE  # ВАЖНО: меняем состояние на QUESTIONNAIRE!
+    return QUESTIONNAIRE
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     user_id = update.effective_user.id
     answer_text = update.message.text
+    message_id = update.message.message_id
+    
+    # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ
+    message_key = f"{user_id}_{message_id}"
+    if message_key in processed_messages:
+        logger.warning(f"🚨 ДУБЛИРОВАНИЕ: сообщение {message_key} уже обработано в handle_question")
+        current_question = context.user_data.get('current_question', 0)
+        if current_question < len(QUESTIONS) - 1:
+            return QUESTIONNAIRE
+        else:
+            return await finish_questionnaire(update, context)
+    
+    processed_messages.add(message_key)
     
     current_question = context.user_data.get('current_question', 0)
     logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
@@ -125,7 +171,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(QUESTIONS[next_question])
         
         logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
-        return QUESTIONNAIRE  # ВАЖНО: используем QUESTIONNAIRE для всех вопросов
+        return QUESTIONNAIRE
     else:
         # Анкета завершена
         logger.info(f"✅ Анкета завершена для пользователя {user_id}")
