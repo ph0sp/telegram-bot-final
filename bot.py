@@ -228,38 +228,30 @@ async def main():
         logger.info("🤖 Бот запускается...")
         logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
-        # Запуск бота
-        await application.run_polling(
-            poll_interval=1.0,
-            timeout=20,
-            drop_pending_updates=True,
-            allowed_updates=[
-                "message", 
-                "callback_query",
-                "edited_message"
-            ]
-        )
+        # ЗАПУСК ЧЕРЕЗ НИЗКОУРОВНЕВЫЙ МЕТОД ВМЕСТО run_polling
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
         
+        # Бесконечный цикл вместо завершения
+        logger.info("✅ Бот успешно запущен и работает...")
+        while True:
+            await asyncio.sleep(3600)  # Спим 1 час
+            
     except KeyboardInterrupt:
         logger.info("🛑 Бот остановлен пользователем")
     except Exception as e:
         logger.error(f"❌ Запуск бота не удался: {e}")
         raise
+    finally:
+        # Корректное завершение работы
+        if application:
+            await application.stop()
+            await application.shutdown()
 
 if __name__ == "__main__":
-    import asyncio
-    import sys
-    
-    # Для Linux систем используем uvloop если доступен
-    if sys.platform != "win32":
-        try:
-            import uvloop
-            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        except ImportError:
-            pass
-    
-    # Простой и надежный запуск
     try:
+        # Простой и надежный запуск
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Бот остановлен")
