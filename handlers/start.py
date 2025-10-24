@@ -11,12 +11,15 @@ from database import (
 from services.google_sheets import save_client_to_sheets
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /start - начинает новую анкету"""
+    """Обработчик команды /start - ВСЕГДА начинает анкету заново"""
     try:
         user = update.effective_user
         user_id = user.id
         
         logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
+        
+        # ВСЕГДА начинаем новую анкету - очищаем все предыдущие данные
+        context.user_data.clear()
         
         # Сохраняем пользователя с обработкой ошибок (АСИНХРОННО)
         try:
@@ -118,24 +121,15 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
         
-        # ВАЖНО: НЕ сбрасываем прогресс анкеты! Просто продолжаем с того же места
-        # Если анкета еще не начата, устанавливаем первый вопрос
-        if context.user_data.get('current_question', -1) < 0:
-            context.user_data['current_question'] = 0
-        
-        # Инициализируем answers только если его нет
-        if 'answers' not in context.user_data:
-            context.user_data['answers'] = {}
-            
+        # ВСЕГДА начинаем анкету с ПЕРВОГО вопроса
+        context.user_data['current_question'] = 0
+        context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
         
-        # Получаем текущий вопрос
-        current_question = context.user_data['current_question']
+        # Отправляем ПЕРВЫЙ вопрос
+        await update.message.reply_text(QUESTIONS[0])
         
-        # Отправляем текущий вопрос (не всегда первый!)
-        await update.message.reply_text(QUESTIONS[current_question])
-        
-        logger.info(f"🔁 Продолжаем анкету с вопроса {current_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
+        logger.info(f"🔁 Начинаем анкету с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
         return QUESTIONNAIRE
     
     except Exception as e:
