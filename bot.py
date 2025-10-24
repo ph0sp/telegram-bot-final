@@ -113,28 +113,6 @@ def main():
 
         # Автоматическая настройка обработчика диалога
         logger.info("🔄 Автоматическая регистрация обработчиков команд...")
-        
-        # СОЗДАЕМ ConversationHandler с правильными состояниями
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],  # ЯВНО используем start
-            states={
-                GENDER: [
-                    MessageHandler(filters.Regex('^(🧌 Мужской|🧝🏽‍♀️ Женский|Мужской|Женский)$'), gender_choice)
-                ],
-                READY_CONFIRMATION: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ready_confirmation)
-                ],
-                QUESTIONNAIRE: [  # ВАЖНО: используем QUESTIONNAIRE для вопросов анкеты
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question)
-                ],
-                ADD_PLAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_user)],
-                ADD_PLAN_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_date)],
-                ADD_PLAN_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_content)],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-            # Важно: позволяем перезапускать анкету
-            allow_reentry=True
-        )
 
         # ВАЖНО: ConversationHandler должен быть ПЕРВЫМ обработчиком
         application.add_handler(conv_handler)
