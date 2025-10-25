@@ -83,11 +83,11 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
     # Проверяем, нужно ли игнорировать эту ошибку
     for ignore in ignore_errors:
         if ignore in str(error):
-            logger.warning(f"⚠️ Игнорируем ошибку: {error}")
+            logger.warning(f"⚠️ Игнорируем ошибку: {e}")
             return
     
     # Логируем ошибки в файл
-    logger.error(f"❌ Ошибка в боте: {error}")
+    logger.error(f"❌ Ошибка в боте: {e}")
 
 async def main():
     """Асинхронная функция запуска бота"""
@@ -228,26 +228,19 @@ async def main():
         logger.info("🤖 Бот запускается...")
         logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
-        # ЗАПУСК ЧЕРЕЗ НИЗКОУРОВНЕВЫЙ МЕТОД ВМЕСТО run_polling
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
+        # ПРОСТОЙ И ПРАВИЛЬНЫЙ ЗАПУСК
+        await application.run_polling(
+            poll_interval=1.0,
+            timeout=20,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "edited_message"]
+        )
         
-        # Бесконечный цикл вместо завершения
-        logger.info("✅ Бот успешно запущен и работает...")
-        while True:
-            await asyncio.sleep(3600)  # Спим 1 час
-            
     except KeyboardInterrupt:
         logger.info("🛑 Бот остановлен пользователем")
     except Exception as e:
         logger.error(f"❌ Запуск бота не удался: {e}")
         raise
-    finally:
-        # Корректное завершение работы
-        if application:
-            await application.stop()
-            await application.shutdown()
 
 if __name__ == "__main__":
     try:
