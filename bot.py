@@ -2,9 +2,8 @@ import logging
 from datetime import datetime, time as dt_time
 import signal
 import sys
-import asyncio
 
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -48,56 +47,9 @@ from handlers.base import handle_all_messages
 # Импорт асинхронной инициализации БД
 from database import initialize_database
 
-# Глобальная переменная для graceful shutdown
-application = None
-
-def signal_handler(sig, frame):
-    """Обработчик сигналов для graceful shutdown"""
-    logger.info("🛑 Получен сигнал остановки...")
-    if application:
-        application.stop()
-    sys.exit(0)
-
-async def error_handler(update: Update, context: CallbackContext) -> None:
-    """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
-    error = context.error
-    
-    # Игнорируем самые частые и неважные ошибки
-    ignore_errors = [
-        "terminated by other getUpdates request",
-        "Conflict", 
-        "ConnectionError",
-        "Timed out",
-        "RetryAfter",
-        "Restarting",
-        "Connection lost",
-        "Connection aborted",
-        "Read timed out",
-        "Bad Request",
-        "Forbidden",
-        "Not Found",
-        "Unauthorized",
-        "Chat not found"
-    ]
-    
-    # Проверяем, нужно ли игнорировать эту ошибку
-    for ignore in ignore_errors:
-        if ignore in str(error):
-            logger.warning(f"⚠️ Игнорируем ошибку: {e}")
-            return
-    
-    # Логируем ошибки в файл
-    logger.error(f"❌ Ошибка в боте: {e}")
-
-async def main():
-    """Асинхронная функция запуска бота"""
-    global application
-    
+def main():
+    """Синхронная функция запуска бота"""
     try:
-        # Настройка обработчиков сигналов
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
         # Логирование информации о доступных сервисах
         logger.info("=== ЗАПУСК БОТА ===")
         logger.info(f"✅ PostgreSQL доступен: {POSTGRESQL_AVAILABLE}")
@@ -114,19 +66,42 @@ async def main():
             logger.error("❌ Chat ID не указан! Установите YOUR_CHAT_ID в .env файле")
             return
 
-        # ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ (АСИНХРОННАЯ)
-        if POSTGRESQL_AVAILABLE:
-            logger.info("🔄 Инициализация базы данных...")
-            await initialize_database()
-            logger.info("✅ База данных инициализирована")
-        else:
-            logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
-
         # Создание приложения
         logger.info("🔄 Создание приложения Telegram...")
         application = Application.builder().token(TOKEN).build()
         
         # Регистрация обработчика ошибок
+        async def error_handler(update: Update, context: CallbackContext) -> None:
+            """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
+            error = context.error
+            
+            # Игнорируем самые частые и неважные ошибки
+            ignore_errors = [
+                "terminated by other getUpdates request",
+                "Conflict", 
+                "ConnectionError",
+                "Timed out",
+                "RetryAfter",
+                "Restarting",
+                "Connection lost",
+                "Connection aborted",
+                "Read timed out",
+                "Bad Request",
+                "Forbidden",
+                "Not Found",
+                "Unauthorized",
+                "Chat not found"
+            ]
+            
+            # Проверяем, нужно ли игнорировать эту ошибку
+            for ignore in ignore_errors:
+                if ignore in str(error):
+                    logger.warning(f"⚠️ Игнорируем ошибку: {error}")
+                    return
+            
+            # Логируем ошибки в файл
+            logger.error(f"❌ Ошибка в боте: {error}")
+        
         application.add_error_handler(error_handler)
 
         # Настройка обработчика диалога
@@ -228,8 +203,8 @@ async def main():
         logger.info("🤖 Бот запускается...")
         logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
-        # ПРОСТОЙ И ПРАВИЛЬНЫЙ ЗАПУСК
-        await application.run_polling(
+        # Запуск бота (синхронный)
+        application.run_polling(
             poll_interval=1.0,
             timeout=20,
             drop_pending_updates=True,
@@ -243,10 +218,4 @@ async def main():
         raise
 
 if __name__ == "__main__":
-    try:
-        # Простой и надежный запуск
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот остановлен")
-    except Exception as e:
-        logging.error(f"❌ Ошибка запуска бота: {e}")
+    main()
