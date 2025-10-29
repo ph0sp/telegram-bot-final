@@ -1,4 +1,3 @@
-
 import logging
 from datetime import datetime, time as dt_time
 import signal
@@ -24,7 +23,6 @@ from config import (
     POSTGRESQL_AVAILABLE, GOOGLE_SHEETS_AVAILABLE
 )
 
-# ЯВНЫЙ ИМПОРТ всех функций из handlers.start
 from handlers.start import (
     start, gender_choice, handle_ready_confirmation, 
     handle_question, finish_questionnaire, cancel
@@ -115,7 +113,6 @@ async def main():
             logger.error("❌ Chat ID не указан! Установите YOUR_CHAT_ID в .env файле")
             return
 
-        # ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ (АСИНХРОННАЯ)
         if POSTGRESQL_AVAILABLE:
             logger.info("🔄 Инициализация базы данных...")
             await initialize_database()
@@ -123,7 +120,6 @@ async def main():
         else:
             logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
 
-        # Создание приложения
         logger.info("🔄 Создание приложения Telegram...")
         application = Application.builder().token(TOKEN).build()
         
@@ -252,7 +248,6 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        # Простой и надежный запуск
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Бот остановлен")
