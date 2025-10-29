@@ -14,7 +14,6 @@ from services.google_sheets import (
     get_daily_plan_from_sheets, save_daily_report_to_sheets
 )
 
-# ВОССТАНОВИЛ логгер - возможно нужен для этого модуля
 logger = logging.getLogger(__name__)
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
