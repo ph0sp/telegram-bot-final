@@ -2,8 +2,6 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# ========== БЕЗОПАСНОЕ ОБЪЕДИНЕНИЕ ПУТЕЙ ==========
-
 def safe_path_join(base_dir, filename):
     """Безопасное объединение путей"""
     if not filename:
@@ -12,15 +10,11 @@ def safe_path_join(base_dir, filename):
         raise ValueError(f"Недопустимое имя файла: {filename}")
     return os.path.join(base_dir, filename)
 
-# ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
-
 # Абсолютный путь к .env файлу (исправляет проблему с путями)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = safe_path_join(BASE_DIR, '.env')
 
 load_dotenv(ENV_PATH)
-
-# ========== КОНФИГУРАЦИЯ ЛОГГИРОВАНИЯ ==========
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,8 +26,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ========== ОСНОВНЫЕ НАСТРОЙКИ ==========
-
 # Токены и ключи (обязательные)
 TOKEN = os.getenv('BOT_TOKEN')
 YOUR_CHAT_ID = os.getenv('YOUR_CHAT_ID')
@@ -43,8 +35,6 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 GOOGLE_SHEETS_ID = os.getenv('GOOGLE_SHEETS_ID')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
-# ========== ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ ==========
-
 if not TOKEN:
     logger.error("❌ Токен бота не найден! Установите BOT_TOKEN в .env файле")
     exit(1)
@@ -53,7 +43,6 @@ if not YOUR_CHAT_ID:
     logger.error("❌ Chat ID не найден! Установите YOUR_CHAT_ID в .env файле")
     exit(1)
 
-# Валидация YOUR_CHAT_ID как числа
 try:
     YOUR_CHAT_ID = int(YOUR_CHAT_ID)
     logger.info(f"✅ Chat ID валиден: {YOUR_CHAT_ID}")
@@ -65,13 +54,10 @@ if not DATABASE_URL:
     logger.error("❌ DATABASE_URL не найден! Установите DATABASE_URL в .env файле")
     exit(1)
 
-# ========== GOOGLE SHEETS КОНФИГУРАЦИЯ ==========
-
 # Вместо хранения JSON в переменной, читаем из файла
 GOOGLE_SHEETS_AVAILABLE = False
 if GOOGLE_SHEETS_ID and GOOGLE_CREDENTIALS_JSON:
     try:
-        # Проверяем существование файла с credentials
         creds_file_path = safe_path_join(BASE_DIR, GOOGLE_CREDENTIALS_JSON)
         logger.info(f"🔍 Ищем файл credentials по пути: {creds_file_path}")
         
@@ -83,7 +69,6 @@ if GOOGLE_SHEETS_ID and GOOGLE_CREDENTIALS_JSON:
             logger.info("✅ Google Sheets credentials файл найден")
         else:
             logger.warning(f"⚠️ Файл {GOOGLE_CREDENTIALS_JSON} не найден по пути: {creds_file_path}")
-            # Покажем какие файлы есть в папке
             try:
                 existing_files = [f for f in os.listdir(BASE_DIR) if f.endswith('.json')]
                 logger.info(f"📁 Найденные JSON файлы: {existing_files}")
@@ -97,24 +82,15 @@ else:
     if not GOOGLE_CREDENTIALS_JSON:
         logger.warning("⚠️ GOOGLE_CREDENTIALS_JSON не указан в .env")
 
-# ========== DATABASE КОНФИГУРАЦИЯ ==========
-
-# УБИРАЕМ ПРОВЕРКУ PSYCOPG2 - она синхронная и мешает работе
-# Вместо этого используем asyncpg в database.py
 POSTGRESQL_AVAILABLE = bool(DATABASE_URL)
 if POSTGRESQL_AVAILABLE:
     logger.info("✅ PostgreSQL настроен")
 else:
     logger.error("❌ DATABASE_URL не указан")
 
-# ========== СОСТОЯНИЯ ДИАЛОГА ==========
-
-# Правильная нумерация для сброса анкеты каждый раз
 (GENDER, READY_CONFIRMATION, QUESTIONNAIRE,
  ADD_PLAN_USER, ADD_PLAN_DATE, ADD_PLAN_CONTENT,
  SELECT_TEMPLATE, SELECT_USER_FOR_TEMPLATE, SELECT_DATE_FOR_TEMPLATE) = range(9)
-
-# ========== КОНСТАНТЫ ДЛЯ ИНДЕКСОВ ПЛАНОВ ==========
 
 PLAN_FIELDS = {
     'id': 0, 'user_id': 1, 'plan_date': 2, 'morning_ritual1': 4, 'morning_ritual2': 5,
@@ -122,8 +98,6 @@ PLAN_FIELDS = {
     'evening_ritual1': 11, 'evening_ritual2': 12, 'advice': 13, 'sleep_time': 14,
     'water_goal': 15, 'activity_goal': 16
 }
-
-# ========== ВОПРОСЫ АНКЕТЫ ==========
 
 QUESTIONS = [
     "Давайте начнем!\nПоследовательно отвечайте на вопросы в свободной форме, как вам удобно.\nНачнем с самого главного\n\nБлок 1: Цель и главный фокус\nКакая ваша главная цель на ближайший месяц? (например, запуск проекта, подготовка к экзамену, улучшение физической формы, обучение новому навыку)\n\nЖду вашего ответа, чтобы двигаться дальше.",
@@ -170,8 +144,6 @@ QUESTIONS = [
     "Что чаще всего мешает вам следовать планам? (неожиданные дела, лень, отсутствие мотивации)",
     "Как нам лучше всего предусмотреть \"дни непредвиденных обстоятельств\" или дни с низкой энергией? (Например, запланировать 1-2 таких дня в неделю)"
 ]
-
-# ========== ШАБЛОНЫ ПЛАНОВ ==========
 
 PLAN_TEMPLATES = {
     "продуктивный_день": {
@@ -441,8 +413,6 @@ PLAN_TEMPLATES = {
     }
 }
 
-# ========== РАСПИСАНИЕ ШАБЛОНОВ ==========
-
 WEEKLY_TEMPLATE_SCHEDULE = {
     "понедельник": "продуктивный_день",
     "вторник": "обучение_развитие", 
@@ -453,19 +423,15 @@ WEEKLY_TEMPLATE_SCHEDULE = {
     "воскресенье": "баланс_работа_отдых"
 }
 
-# ========== ПРОВЕРКА КОНФИГУРАЦИИ ==========
-
 def validate_config():
     """Проверка корректности конфигурации при старте"""
     
-    # Проверка PLAN_FIELDS
     required_fields = ['id', 'user_id', 'plan_date', 'morning_ritual1', 'task1']
     for field in required_fields:
         if field not in PLAN_FIELDS:
             logger.error(f"❌ Отсутствует обязательное поле в PLAN_FIELDS: {field}")
             return False
     
-    # Проверка шаблонов
     required_template_keys = ['name', 'description', 'strategic_tasks', 'critical_tasks']
     for template_name, template in PLAN_TEMPLATES.items():
         for key in required_template_keys:
@@ -473,7 +439,6 @@ def validate_config():
                 logger.error(f"❌ В шаблоне '{template_name}' отсутствует ключ: {key}")
                 return False
     
-    # Проверка расписания
     days_of_week = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
     for day in days_of_week:
         if day not in WEEKLY_TEMPLATE_SCHEDULE:
@@ -483,8 +448,7 @@ def validate_config():
             logger.error(f"❌ Неизвестный шаблон для дня '{day}': {WEEKLY_TEMPLATE_SCHEDULE[day]}")
             return False
     
-    # Проверка количества вопросов анкеты
-    expected_questions_count = 35  # Актуальное количество вопросов
+    expected_questions_count = 35
     if len(QUESTIONS) != expected_questions_count:
         logger.error(f"❌ Неверное количество вопросов: {len(QUESTIONS)}, ожидалось: {expected_questions_count}")
         return False
@@ -492,7 +456,6 @@ def validate_config():
     logger.info("✅ Конфигурация прошла валидацию")
     return True
 
-# Вызов проверки при импорте
 if not validate_config():
     logger.error("❌ Ошибка валидации конфигурации!")
     exit(1)
