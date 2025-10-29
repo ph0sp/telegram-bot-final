@@ -12,12 +12,10 @@ async def handle_all_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     message_text = update.message.text
 
-    # ВАЖНОЕ ИСПРАВЛЕНИЕ: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
     if context.user_data.get('questionnaire_started'):
         logger.info(f"🔇 Игнорируем сообщение во время анкеты: {message_text}")
         return
 
-    # УСИЛЕННАЯ ПРОВЕРКА: если пользователь в процессе анкеты - НЕ ОБРАБАТЫВАЕМ сообщение
     # Проверяем конкретные состояния анкеты:
     current_question = context.user_data.get('current_question', -2)
     has_assistant_data = context.user_data.get('assistant_gender') or context.user_data.get('assistant_name')
@@ -92,7 +90,6 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
     """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
     error = context.error
 
-    # Игнорируем самые частые и неважные ошибки
     ignore_errors = [
         "terminated by other getUpdates request",
         "Conflict", 
@@ -116,5 +113,4 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
             logger.warning(f"⚠️ Игнорируем ошибку: {error}")
             return
 
-    # Только логируем ошибки в файл, НЕ отправляем в Telegram
     logger.error(f"❌ Ошибка в боте: {error}")
