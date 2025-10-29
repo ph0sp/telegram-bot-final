@@ -351,7 +351,7 @@ def parse_time_input(time_text: str):
         'в полдень': '12:00'
     }
     
-    # 1. Проверяем точное время с двоеточием (14:30, 9:00)
+    # Проверяем точное время с двоеточием (14:30, 9:00)
     exact_time_match = re.search(r'(\d{1,2}):(\d{2})', time_text)
     if exact_time_match:
         hours = int(exact_time_match.group(1))
@@ -361,7 +361,7 @@ def parse_time_input(time_text: str):
             logger.info(f"✅ Распознано точное время: {time_str}")
             return {'time': time_str, 'type': 'exact'}
     
-    # 2. Проверяем форматы типа "11 часов вечера", "7 утра", "3 ночи"
+    # Проверяем форматы типа "11 часов вечера", "7 утра", "3 ночи"
     hour_time_match = re.search(r'(\d{1,2})\s*(?:час\w*)?\s*(утра|вечера|ночи|дня)', time_text)
     if hour_time_match:
         hour = int(hour_time_match.group(1))
