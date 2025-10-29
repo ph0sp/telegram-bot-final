@@ -125,7 +125,6 @@ async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"📋 План сохранен в Google Sheets"
         )
         
-        # Уведомляем пользователя
         try:
             await context.bot.send_message(
                 chat_id=user_id,
