@@ -11,8 +11,6 @@ from asyncpg import Connection, Record
 
 from config import DATABASE_URL, logger, QUESTIONS, POSTGRESQL_AVAILABLE
 
-# ========== АСИНХРОННАЯ СИСТЕМА БАЗЫ ДАННЫХ ==========
-
 # Глобальный пул подключений для эффективности
 _connection_pool = None
 
@@ -190,8 +188,6 @@ async def init_database():
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации БД: {e}")
         return False
-
-# ========== ОСНОВНЫЕ АСИНХРОННЫЕ ФУНКЦИИ БАЗЫ ДАННЫХ ==========
 
 async def save_user_info(user_id: int, username: str, first_name: str, last_name: Optional[str] = None):
     """Асинхронно сохраняет информацию о пользователе в базу данных"""
@@ -604,8 +600,6 @@ async def get_user_usage_days(user_id: int) -> Dict[str, int]:
     except Exception as e:
         logger.error(f"❌ Ошибка получения дней использования {user_id}: {e}")
         return {'days_since_registration': 0, 'active_days': 0, 'current_day': 0, 'current_streak': 0}
-
-# ========== АСИНХРОННЫЕ ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ==========
 
 async def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> bool:
     """Асинхронно добавляет напоминание в базу данных"""
