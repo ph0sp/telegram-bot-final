@@ -21,15 +21,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # ВСЕГДА начинаем новую анкету - очищаем все предыдущие данные
         context.user_data.clear()
         
-        # Сохраняем пользователя с обработкой ошибок (АСИНХРОННО)
         try:
             await save_user_info(user_id, user.username, user.first_name, user.last_name)
             await update_user_activity(user_id)
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
-            # Продолжаем работу, так как это не критично для анкеты
         
-        # КНОПКИ С ВАШИМИ СМАЙЛИКАМИ
         keyboard = [['🧌 Мужской', '🧝🏽‍♀️ Женский']]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
         
@@ -66,7 +63,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
         logger.info(f"🎭 Пользователь {user_id} выбрал: {user_text}")
         
-        # НАДЕЖНАЯ обработка выбора пола
         if 'Мужской' in user_text:
             gender = 'Мужской'
             assistant_name = 'Антон'
@@ -76,7 +72,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             assistant_name = 'Валерия' 
             greeting_emoji = '🧝🏽‍♀️'
         else:
-            # Защита от неожиданного ввода
             logger.warning(f"⚠️ Неизвестный выбор пола: {user_text}, используем по умолчанию")
             gender = 'Мужской'
             assistant_name = 'Антон'
@@ -88,7 +83,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
         logger.info(f"✅ Выбран пол: {gender}, ассистент: {assistant_name}")
         
-        # Приветствие как в вашем примере - ОДИН РАЗ
         await update.message.reply_text(
             f'{greeting_emoji} Привет! Меня зовут {assistant_name}. Я ваш персональный ассистент.\n\n'
             f'Моя задача – помочь структурировать ваш день для максимальной продуктивности и достижения целей без стресса и выгорания.\n\n'
@@ -100,7 +94,6 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             reply_markup=ReplyKeyboardRemove()
         )
         
-        # Устанавливаем, что следующий шаг - подтверждение готовности
         context.user_data['current_question'] = -1
         
         logger.info(f"🔁 Ждем подтверждения готовности, возвращаем состояние READY_CONFIRMATION: {READY_CONFIRMATION}")
@@ -194,7 +187,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         
         logger.info(f"🎉 Завершаем анкету {questionnaire_id} для пользователя {user_id}")
         
-        # Сохраняем данные анкеты в Google Sheets с обработкой ошибок
         user_data = {
             'user_id': user.id,
             'telegram_username': user.username,
@@ -214,7 +206,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             'assistant_name': assistant_name
         }
         
-        # Добавляем все ответы на вопросы
         for i, question in enumerate(QUESTIONS):
             answer = context.user_data['answers'].get(i, '❌ Нет ответа')
             user_data[f'question_{i+1}'] = answer
@@ -224,9 +215,8 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.info(f"✅ Данные анкеты {questionnaire_id} сохранены в Google Sheets")
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в Google Sheets: {e}")
-            # Не прерываем выполнение, так как это не критично для пользователя
         
-        # Формируем анкету для отправки админу
+
         questionnaire = f"📋 Новая анкета от пользователя:\n\n"
         questionnaire += f"👤 ID: {user.id}\n"
         questionnaire += f"📛 Имя: {user.first_name}\n"
@@ -264,7 +254,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки анкеты: {e}")
         
-        # Отправляем кнопки админу
         try:
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Ответить пользователю", callback_data=f"reply_{user.id}")],
@@ -301,7 +290,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=reply_markup
         )
         
-        # Очищаем только данные анкеты, сохраняем информацию об ассистенте
         keys_to_keep = ['assistant_name', 'assistant_gender', 'greeting_emoji']
         preserved_data = {k: context.user_data.get(k) for k in keys_to_keep if k in context.user_data}
         context.user_data.clear()
