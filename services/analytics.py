@@ -13,7 +13,6 @@ def analyze_user_profile(user_id: int) -> Dict[str, Any]:
     """Анализирует профиль пользователя по новой анкете"""
     from database import get_db_connection
 
-    # ИСПРАВЛЕНИЕ: объявляем conn заранее для безопасности в finally
     conn = None
     try:
         conn = get_db_connection()
@@ -29,7 +28,6 @@ def analyze_user_profile(user_id: int) -> Dict[str, Any]:
         for row in rows:
             answers[row['question_number']] = row['answer_text']
         
-        # Базовый анализ
         profile = {
             'user_id': user_id,
             'main_goal': answers.get(1, ''),
@@ -92,7 +90,6 @@ def analyze_work_style(answer: Optional[str]) -> Dict[str, Any]:
         'focus_aids': []
     }
     
-    # Безопасно добавляем focus aids
     if 'тишина' in safe_answer:
         work_style['focus_aids'].append('quiet_environment')
     if 'музыка' in safe_answer:
