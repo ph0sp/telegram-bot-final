@@ -16,29 +16,24 @@ async def handle_all_messages(update: Update, context: CallbackContext):
         logger.info(f"🔇 Игнорируем сообщение во время анкеты: {message_text}")
         return
 
-    # Проверяем конкретные состояния анкеты:
     current_question = context.user_data.get('current_question', -2)
     has_assistant_data = context.user_data.get('assistant_gender') or context.user_data.get('assistant_name')
     questionnaire_started = context.user_data.get('questionnaire_started', False)
     
-    # Если пользователь в ЛЮБОМ из этих состояний анкеты - пропускаем обработку
     if current_question >= -1 or has_assistant_data or questionnaire_started:
         logger.info(f"⏩ Пропускаем сообщение в состоянии анкеты (вопрос {current_question}): {message_text}")
         return
     
-    # Только если пользователь НЕ в анкете - продолжаем обработку
     save_message(user_id, message_text, 'incoming')
     update_user_activity(user_id)
 
     logger.info(f"💬 Получено сообщение от {user_id}: {message_text}")
 
-    # Проверяем, является ли сообщение напоминанием
     if any(word in message_text.lower() for word in ['напомни', 'напоминай', 'напомни мне']):
         from handlers.reminder import handle_reminder_nlp
         await handle_reminder_nlp(update, context)
         return
 
-    # Обработка нажатий на кнопки
     button_handlers = {
         '📊 Прогресс': 'progress_command',
         '👤 Профиль': 'profile_command',
@@ -48,7 +43,6 @@ async def handle_all_messages(update: Update, context: CallbackContext):
         '🎮 Очки опыта': 'points_info_command'
     }
 
-    # Проверяем кнопки в независимости от регистра
     normalized_text = message_text.lower().strip()
     for button_text, handler_name in button_handlers.items():
         if button_text.lower() == normalized_text:
@@ -74,7 +68,6 @@ async def handle_all_messages(update: Update, context: CallbackContext):
                 await points_info_command(update, context)
             return
 
-    # Если это не команда и не напоминание, отвечаем стандартным сообщением
     await update.message.reply_text(
         "🤖 Я ваш ассистент по продуктивности!\n\n"
         "Используйте кнопки меню или команды:\n"
@@ -107,7 +100,6 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
         "Chat not found"
     ]
 
-    # Проверяем, нужно ли игнорировать эту ошибку
     for ignore in ignore_errors:
         if ignore in str(error):
             logger.warning(f"⚠️ Игнорируем ошибку: {error}")
