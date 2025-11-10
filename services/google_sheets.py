@@ -12,7 +12,6 @@ from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-# Глобальная переменная для хранения подключения к Google Sheets
 google_sheet = None
 
 def init_google_sheets():
@@ -20,25 +19,20 @@ def init_google_sheets():
     global google_sheet
     
     try:
-        # Пытаемся загрузить credentials разными способами
         creds_dict = None
         
-        # Способ 1: Из переменной окружения
         from config import GOOGLE_CREDENTIALS_JSON
         if GOOGLE_CREDENTIALS_JSON:
             try:
-                # Проверяем, является ли уже словарем
                 if isinstance(GOOGLE_CREDENTIALS_JSON, dict):
                     creds_dict = GOOGLE_CREDENTIALS_JSON
                     logger.info("✅ Credentials загружены из переменной окружения (уже dict)")
                 else:
-                    # Пытаемся распарсить как JSON строку
                     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
                     logger.info("✅ Credentials загружены из переменной окружения (распарсена строка)")
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"⚠️ Не удалось распарсить GOOGLE_CREDENTIALS_JSON: {e}")
         
-        # Способ 2: Из файла (резервный вариант)
         if not creds_dict and os.path.exists('/home/ubuntu/telegram-bot/creds.json'):
             try:
                 with open('/home/ubuntu/telegram-bot/creds.json', 'r') as f:
@@ -55,22 +49,17 @@ def init_google_sheets():
             logger.error("❌ GOOGLE_SHEETS_ID не настроен")
             return None
         
-        # Настраиваем scope
         scope = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
         
-        # Создаем credentials
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         
-        # Авторизуемся
         client = gspread.authorize(creds)
         
-        # Открываем таблицу
         sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         
-        # Создаем листы если их нет
         try:
             sheet.worksheet("клиенты_детали")
         except gspread.exceptions.WorksheetNotFound:
@@ -152,7 +141,6 @@ def init_google_sheets():
         logger.error(f"❌ Ошибка инициализации Google Sheets: {e}")
         return None
 
-# Инициализируем Google Sheets при импорте модуля
 google_sheet = init_google_sheets()
 
 async def save_client_to_sheets(user_data: Dict[str, Any]):
@@ -162,7 +150,6 @@ async def save_client_to_sheets(user_data: Dict[str, Any]):
         return False
     
     try:
-        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _sync_save_client_to_sheets, user_data)
         
@@ -178,7 +165,6 @@ def _sync_save_client_to_sheets(user_data: Dict[str, Any]):
     try:
         worksheet = google_sheet.worksheet("клиенты_детали")
         
-        # Ищем существующего клиента
         try:
             cell = worksheet.find(str(user_data['user_id']))
             row = cell.row
@@ -210,7 +196,6 @@ def _sync_save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('ближайшая_цель', '')
             ]])
         except Exception:
-            # Создаем новую запись
             worksheet.append_row([
                 user_data['user_id'],
                 user_data.get('telegram_username', ''),
@@ -303,7 +288,6 @@ async def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any])
             username = user_info['username'] if user_info['username'] else ""
             first_name = user_info['first_name'] if user_info['first_name'] else ""
         
-        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _sync_save_daily_report_to_sheets, user_id, username, first_name, report_data)
         
@@ -377,7 +361,6 @@ def _sync_get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
     try:
         worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
         
-        # Ищем пользователя
         try:
             cell = worksheet.find(str(user_id))
             row = cell.row
@@ -385,12 +368,10 @@ def _sync_get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
             logger.warning(f"⚠️ Пользователь {user_id} не найден в Google Sheets")
             return {}
         
-        # Получаем все данные строки
         row_data = worksheet.row_values(row)
         
-        # Определяем колонку для нужной даты
         day = datetime.strptime(date, "%Y-%m-%d").day
-        date_column_index = 4 + day - 1  # 4 базовые колонки + день месяца
+        date_column_index = 4 + day - 1 
         
         if date_column_index >= len(row_data):
             logger.warning(f"⚠️ Для даты {date} нет данных в Google Sheets")
@@ -398,7 +379,6 @@ def _sync_get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
         
         plan_text = row_data[date_column_index]
         
-        # Парсим структурированный текст плана
         plan_data = parse_structured_plan(plan_text)
         
         return plan_data
@@ -433,7 +413,6 @@ def parse_structured_plan(plan_text: str) -> Dict[str, Any]:
         if not line:
             continue
             
-        # Определяем секции
         if 'СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:' in line:
             current_section = 'strategic_tasks'
             continue
@@ -465,7 +444,6 @@ def parse_structured_plan(plan_text: str) -> Dict[str, Any]:
             current_section = 'motivation_quote'
             continue
             
-        # Добавляем данные в текущую секцию
         if current_section and line.startswith('- '):
             content = line[2:].strip()
             if current_section == 'motivation_quote':
@@ -485,14 +463,12 @@ async def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any
         # Форматируем план в структурированный текст
         plan_text = format_enhanced_plan(plan)
         
-        # Асинхронно получаем информацию о пользователе если нужно
         async with get_db_connection() as conn:
             user_info = await conn.fetchrow("SELECT username, first_name FROM clients WHERE user_id = $1", user_id)
             
             username = user_info['username'] if user_info and user_info['username'] else ""
             first_name = user_info['first_name'] if user_info and user_info['first_name'] else ""
         
-        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _sync_save_daily_plan_to_sheets, user_id, username, first_name, date, plan_text)
         
