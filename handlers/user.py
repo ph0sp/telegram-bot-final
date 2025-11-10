@@ -25,7 +25,6 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    # Получаем план из Google Sheets
     today = datetime.now().strftime("%Y-%m-%d")
     plan_data = get_daily_plan_from_sheets(user_id, today)
     
@@ -38,7 +37,6 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Формируем сообщение с планом
     plan_text = f"📋 Ваш индивидуальный план на {today}:\n\n"
     
     if plan_data.get('strategic_tasks'):
@@ -80,7 +78,6 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not await has_sufficient_data(user_id):
-        # Показываем сообщение о недостатке данных
         usage_days = await get_user_usage_days(user_id)
         
         await update.message.reply_text(
@@ -97,7 +94,6 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Уже через 3 дня появится персональная статистика."
         )
     else:
-        # Получаем данные за последние 7 дней с использованием асинхронной БД
         try:
             async with get_db_connection() as conn:
                 result = await conn.fetchrow("""
@@ -119,7 +115,6 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 avg_water = float(result['avg_water']) if result['avg_water'] else 0
                 active_days = result['active_days'] if result['active_days'] else 0
 
-                # Рассчитываем проценты и динамику
                 tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
                 mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
                 energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
@@ -131,11 +126,9 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
                 productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
-                # Получаем дополнительную информацию для профиля
                 usage_days = await get_user_usage_days(user_id)
                 level_info = await get_user_level_info(user_id)
 
-                # Персональный совет
                 advice = "Продолжайте в том же духе! Вы на правильном пути."
                 if avg_water and avg_water < 6:
                     advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
@@ -171,13 +164,11 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    # Получаем данные для профиля
     main_goal = await get_user_main_goal(user_id)
     usage_days = await get_user_usage_days(user_id)
     level_info = await get_user_level_info(user_id)
     favorite_ritual = await get_favorite_ritual(user_id)
     
-    # Получаем статистику по планам с использованием асинхронной БД
     try:
         async with get_db_connection() as conn:
             total_plans = await conn.fetchval(
@@ -381,7 +372,6 @@ async def energy_command(update: Update, context: CallbackContext):
         }
         await save_progress_to_db(user_id, progress_data)
         
-        # Сохраняем в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
             'energy': energy
@@ -431,7 +421,6 @@ async def water_command(update: Update, context: CallbackContext):
         }
         await save_progress_to_db(user_id, progress_data)
         
-        # Сохраняем в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
             'water_intake': water
