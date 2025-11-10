@@ -16,7 +16,6 @@ from telegram.ext import (
     filters
 )
 
-# Автоматические импорты из наших модулей
 from config import (
     TOKEN, YOUR_CHAT_ID, GENDER, READY_CONFIRMATION, QUESTIONNAIRE, 
     ADD_PLAN_USER, ADD_PLAN_DATE, ADD_PLAN_CONTENT, logger,
@@ -44,10 +43,8 @@ from handlers.reminder import (
 )
 from handlers.base import handle_all_messages
 
-# Импорт асинхронной инициализации БД
 from database import initialize_database
 
-# Глобальная переменная для graceful shutdown
 application = None
 
 def signal_handler(sig, frame):
@@ -61,7 +58,6 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
     """Обрабатывает ошибки бота БЕЗ отправки в Telegram"""
     error = context.error
     
-    # Игнорируем самые частые и неважные ошибки
     ignore_errors = [
         "terminated by other getUpdates request",
         "Conflict", 
@@ -79,13 +75,11 @@ async def error_handler(update: Update, context: CallbackContext) -> None:
         "Chat not found"
     ]
     
-    # Проверяем, нужно ли игнорировать эту ошибку
     for ignore in ignore_errors:
         if ignore in str(error):
             logger.warning(f"⚠️ Игнорируем ошибку: {error}")
             return
     
-    # Логируем ошибки в файл
     logger.error(f"❌ Ошибка в боте: {error}")
 
 async def main():
@@ -93,18 +87,15 @@ async def main():
     global application
     
     try:
-        # Настройка обработчиков сигналов
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
-        # Логирование информации о доступных сервисах
         logger.info("=== ЗАПУСК БОТА ===")
         logger.info(f"✅ PostgreSQL доступен: {POSTGRESQL_AVAILABLE}")
         logger.info(f"✅ Google Sheets доступен: {GOOGLE_SHEETS_AVAILABLE}")
         logger.info(f"✅ Токен бота: {'установлен' if TOKEN else 'ОТСУТСТВУЕТ'}")
         logger.info(f"✅ Chat ID: {'установлен' if YOUR_CHAT_ID else 'ОТСУТСТВУЕТ'}")
         
-        # Проверка обязательных переменных
         if not TOKEN or ':' not in TOKEN:
             logger.error("❌ Неверный формат токена! Токен должен быть в формате '123456789:ABCdef...'")
             return
@@ -151,17 +142,14 @@ async def main():
             name="main_conversation"
         )
 
-        # ConversationHandler должен быть первым
         application.add_handler(conv_handler)
         
-        # Регистрация команд для пользователей
         application.add_handler(CommandHandler("plan", plan_command))
         application.add_handler(CommandHandler("progress", progress_command))
         application.add_handler(CommandHandler("profile", profile_command))
         application.add_handler(CommandHandler("points_info", points_info_command))
         application.add_handler(CommandHandler("help", help_command))
         
-        # Команды для отслеживания прогресса
         application.add_handler(CommandHandler("done", done_command))
         application.add_handler(CommandHandler("mood", mood_command))
         application.add_handler(CommandHandler("energy", energy_command))
@@ -178,22 +166,17 @@ async def main():
         application.add_handler(CommandHandler("admin_stats", admin_stats))
         application.add_handler(CommandHandler("admin_users", admin_users))
         
-        # Обработчики кнопок
         application.add_handler(CallbackQueryHandler(button_callback))
         
-        # Обработчик всех сообщений - последним
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
         
-        # Настройка системы напоминаний
         logger.info("🔄 Настройка системы напоминаний...")
         schedule_reminders(application)
         
-        # Настройка JobQueue
         logger.info("🔄 Настройка JobQueue...")
         try:
             job_queue = application.job_queue
             if job_queue:
-                # Удаляем только наши старые задачи
                 our_jobs = [job for job in job_queue.jobs() if job.name in ["morning_plan", "evening_survey"]]
                 for job in our_jobs:
                     job.schedule_removal()
@@ -225,15 +208,13 @@ async def main():
         logger.info("🤖 Бот запускается...")
         logger.info("=== ВСЕ СИСТЕМЫ ЗАПУЩЕНЫ ===")
         
-        # ЗАПУСК ЧЕРЕЗ НИЗКОУРОВНЕВЫЙ МЕТОД ВМЕСТО run_polling
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
         
-        # Бесконечный цикл вместо завершения
         logger.info("✅ Бот успешно запущен и работает...")
         while True:
-            await asyncio.sleep(3600)  # Спим 1 час
+            await asyncio.sleep(3600) 
             
     except KeyboardInterrupt:
         logger.info("🛑 Бот остановлен пользователем")
@@ -241,7 +222,6 @@ async def main():
         logger.error(f"❌ Запуск бота не удался: {e}")
         raise
     finally:
-        # Корректное завершение работы
         if application:
             await application.stop()
             await application.shutdown()
