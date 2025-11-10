@@ -18,7 +18,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
         
-        # ВСЕГДА начинаем новую анкету - очищаем все предыдущие данные
         context.user_data.clear()
         
         try:
@@ -38,7 +37,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=reply_markup
         )
         
-        # Инициализируем данные для НОВОЙ анкеты
         context.user_data['current_question'] = -1
         context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
@@ -114,12 +112,10 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
         
-        # ВСЕГДА начинаем анкету с ПЕРВОГО вопроса
         context.user_data['current_question'] = 0
         context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
         
-        # Отправляем ПЕРВЫЙ вопрос
         await update.message.reply_text(QUESTIONS[0])
         
         logger.info(f"🔁 Начинаем анкету с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
@@ -138,7 +134,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_id = update.effective_user.id
         answer_text = update.message.text
         
-        # Проверяем что анкета действительно начата
         if 'questionnaire_started' not in context.user_data:
             logger.error(f"❌ Анкета не начата для пользователя {user_id}")
             await update.message.reply_text("❌ Что-то пошло не так. Пожалуйста, начните анкету заново с /start")
@@ -147,26 +142,21 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         current_question = context.user_data.get('current_question', 0)
         logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
         
-        # Сохраняем ответ на текущий вопрос с обработкой ошибок (АСИНХРОННО)
         try:
             await save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
             context.user_data['answers'][current_question] = answer_text
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения ответа пользователя {user_id}: {e}")
-            # Продолжаем, так как ответ сохранен в context.user_data
         
-        # Переходим к следующему вопросу
         next_question = current_question + 1
         
         if next_question < len(QUESTIONS):
-            # Отправляем следующий вопрос
             context.user_data['current_question'] = next_question
             await update.message.reply_text(QUESTIONS[next_question])
             
             logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
             return QUESTIONNAIRE
         else:
-            # Анкета завершена
             logger.info(f"✅ Анкета завершена для пользователя {user_id}")
             return await finish_questionnaire(update, context)
     
@@ -237,7 +227,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             questionnaire += f"❓ {i+1}. {question}:\n"
             questionnaire += f"💬 {truncated_answer}\n\n"
         
-        # Отправляем админу с обработкой ошибок
         max_length = 4096
         if len(questionnaire) > max_length:
             parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
@@ -271,7 +260,6 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.error(f"❌ Ошибка отправки кнопок админу: {e}")
         
-        # Сообщение пользователю с меню
         keyboard = [
             ['📊 Прогресс', '👤 Профиль'],
             ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -311,7 +299,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     try:
         user_id = update.effective_user.id
         
-        # Очищаем данные анкеты, но сохраняем настройки ассистента
         keys_to_keep = ['assistant_name', 'assistant_gender', 'greeting_emoji']
         preserved_data = {k: context.user_data.get(k) for k in keys_to_keep if k in context.user_data}
         context.user_data.clear()
