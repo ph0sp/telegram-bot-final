@@ -10,7 +10,6 @@ def safe_path_join(base_dir, filename):
         raise ValueError(f"Недопустимое имя файла: {filename}")
     return os.path.join(base_dir, filename)
 
-# Абсолютный путь к .env файлу (исправляет проблему с путями)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = safe_path_join(BASE_DIR, '.env')
 
@@ -26,12 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Токены и ключи (обязательные)
 TOKEN = os.getenv('BOT_TOKEN')
 YOUR_CHAT_ID = os.getenv('YOUR_CHAT_ID')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# Google Sheets настройки
 GOOGLE_SHEETS_ID = os.getenv('GOOGLE_SHEETS_ID')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
@@ -54,14 +51,12 @@ if not DATABASE_URL:
     logger.error("❌ DATABASE_URL не найден! Установите DATABASE_URL в .env файле")
     exit(1)
 
-# Вместо хранения JSON в переменной, читаем из файла
 GOOGLE_SHEETS_AVAILABLE = False
 if GOOGLE_SHEETS_ID and GOOGLE_CREDENTIALS_JSON:
     try:
         creds_file_path = safe_path_join(BASE_DIR, GOOGLE_CREDENTIALS_JSON)
         logger.info(f"🔍 Ищем файл credentials по пути: {creds_file_path}")
         
-        # Улучшенная проверка файла
         if not creds_file_path.endswith('.json'):
             logger.error(f"❌ Файл credentials должен быть JSON: {creds_file_path}")
         elif os.path.exists(creds_file_path):
