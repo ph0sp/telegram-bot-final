@@ -28,7 +28,6 @@ async def add_plan_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         user_id = int(update.message.text)
         context.user_data['plan_user_id'] = user_id
         
-        # Проверяем существование пользователя (АСИНХРОННО)
         try:
             async with get_db_connection() as conn:
                 user_info = await conn.fetchrow(
@@ -101,14 +100,11 @@ async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     date_str = context.user_data['plan_date']
     user_name = context.user_data['user_name']
     
-    # Парсим структурированный план
     plan_data = parse_structured_plan(plan_content)
     
-    # Сохраняем в Google Sheets
     success = save_daily_plan_to_sheets(user_id, date_str, plan_data)
     
     if success:
-        # Сохраняем в PostgreSQL (АСИНХРОННО)
         await save_user_plan_to_db(user_id, {
             'plan_date': date_str,
             'task1': plan_data.get('strategic_tasks', [''])[0] if plan_data.get('strategic_tasks') else '',
@@ -171,7 +167,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"📝 Ответов в анкетах: {total_answers}\n"
     stats_text += f"📋 Индивидуальных планов: {total_plans}\n\n"
     
-    # Проверяем Google Sheets
     from services.google_sheets import google_sheet
     if google_sheet:
         stats_text += f"📊 Google Sheets: ✅ подключен\n"
