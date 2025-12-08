@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes, CallbackContext
 
@@ -8,13 +9,14 @@ from database import (
     update_user_activity, check_user_registered, save_progress_to_db,
     has_sufficient_data, get_user_activity_streak, get_user_main_goal,
     get_favorite_ritual, get_user_level_info, get_user_usage_days,
-    get_db_connection
+    get_connection_pool 
 )
 from services.google_sheets import (
     get_daily_plan_from_sheets, save_daily_report_to_sheets
 )
 
 logger = logging.getLogger(__name__)
+
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
@@ -25,6 +27,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
+    # Получаем план из Google Sheets
     today = datetime.now().strftime("%Y-%m-%d")
     plan_data = get_daily_plan_from_sheets(user_id, today)
     
@@ -37,6 +40,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Формируем сообщение с планом
     plan_text = f"📋 Ваш индивидуальный план на {today}:\n\n"
     
     if plan_data.get('strategic_tasks'):
@@ -68,6 +72,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(plan_text)
 
+
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает персонализированный прогресс"""
     user_id = update.effective_user.id
@@ -78,6 +83,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not await has_sufficient_data(user_id):
+        # Показываем сообщение о недостатке данных
         usage_days = await get_user_usage_days(user_id)
         
         await update.message.reply_text(
@@ -95,7 +101,9 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         try:
-            async with get_db_connection() as conn:
+            # Получаем пул соединений и создаем подключение
+            pool = await get_connection_pool()
+            async with pool.acquire() as conn:
                 result = await conn.fetchrow("""
                     SELECT 
                         COUNT(*) as total_days,
@@ -115,6 +123,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 avg_water = float(result['avg_water']) if result['avg_water'] else 0
                 active_days = result['active_days'] if result['active_days'] else 0
 
+                # Рассчитываем проценты и динамику
                 tasks_completed = f"{int(avg_tasks * 10)}/10" if avg_tasks else "0/10"
                 mood_str = f"{avg_mood:.1f}/10" if avg_mood else "0/10"
                 energy_str = f"{avg_energy:.1f}/10" if avg_energy else "0/10"
@@ -126,9 +135,11 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 energy_dynamics = "↗ растет" if avg_energy and avg_energy > 6 else "→ стабильно"
                 productivity_dynamics = "↗ растет" if avg_tasks and avg_tasks > 5 else "→ стабильно"
 
+                # Получаем дополнительную информацию
                 usage_days = await get_user_usage_days(user_id)
                 level_info = await get_user_level_info(user_id)
 
+                # Персональный совет
                 advice = "Продолжайте в том же духе! Вы на правильном пути."
                 if avg_water and avg_water < 6:
                     advice = "Попробуйте увеличить потребление воды до 8 стаканов - это может повысить энергию!"
@@ -154,6 +165,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Ошибка получения прогресса для {user_id}: {e}")
             await update.message.reply_text("❌ Ошибка при получении статистики. Попробуйте позже.")
 
+
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает профиль пользователя"""
     user = update.effective_user
@@ -164,13 +176,16 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Сначала заполните анкету: /start")
         return
     
-    main_goal = await get_user_main_goal(user_id)
-    usage_days = await get_user_usage_days(user_id)
-    level_info = await get_user_level_info(user_id)
-    favorite_ritual = await get_favorite_ritual(user_id)
-    
     try:
-        async with get_db_connection() as conn:
+        # Получаем данные для профиля
+        main_goal = await get_user_main_goal(user_id)
+        usage_days = await get_user_usage_days(user_id)
+        level_info = await get_user_level_info(user_id)
+        favorite_ritual = await get_favorite_ritual(user_id)
+        
+        # Получаем статистику по планам
+        pool = await get_connection_pool()
+        async with pool.acquire() as conn:
             total_plans = await conn.fetchval(
                 "SELECT COUNT(*) FROM user_plans WHERE user_id = $1", 
                 user_id
@@ -205,6 +220,7 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка получения профиля для {user_id}: {e}")
         await update.message.reply_text("❌ Ошибка при получении профиля. Попробуйте позже.")
 
+
 async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Объясняет систему очков"""
     help_text = (
@@ -226,6 +242,7 @@ async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "• Не пропускайте дни для сохранения серии"
     )
     await update.message.reply_text(help_text)
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
@@ -265,10 +282,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(help_text)
 
+
 async def done_command(update: Update, context: CallbackContext):
     """Отмечает выполнение задачи"""
     user_id = update.effective_user.id
     await update_user_activity(user_id)
+    
+    # Проверка регистрации
+    if not await check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        return
     
     if not context.args:
         await update.message.reply_text(
@@ -286,6 +309,9 @@ async def done_command(update: Update, context: CallbackContext):
         
         task_names = {1: "первую", 2: "вторую", 3: "третью", 4: "четвертую"}
         
+        # 🔴 ПРОБЛЕМА: задача не сохраняется в БД!
+        # Нужно добавить функцию для сохранения выполненных задач
+        
         await update.message.reply_text(
             f"✅ Отлично! Вы выполнили {task_names[task_number]} задачу!\n"
             f"🎉 Продолжайте в том же духе!"
@@ -294,10 +320,16 @@ async def done_command(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Номер задачи должен быть числом")
 
+
 async def mood_command(update: Update, context: CallbackContext):
     """Оценка настроения"""
     user_id = update.effective_user.id
     await update_user_activity(user_id)
+    
+    # Проверка регистрации
+    if not await check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        return
     
     if not context.args:
         await update.message.reply_text(
@@ -346,10 +378,16 @@ async def mood_command(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
 
+
 async def energy_command(update: Update, context: CallbackContext):
     """Оценка уровня энергии"""
     user_id = update.effective_user.id
     await update_user_activity(user_id)
+    
+    # Проверка регистрации
+    if not await check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        return
     
     if not context.args:
         await update.message.reply_text(
@@ -372,6 +410,7 @@ async def energy_command(update: Update, context: CallbackContext):
         }
         await save_progress_to_db(user_id, progress_data)
         
+        # Сохраняем в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
             'energy': energy
@@ -397,10 +436,16 @@ async def energy_command(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
 
+
 async def water_command(update: Update, context: CallbackContext):
     """Отслеживание водного баланса"""
     user_id = update.effective_user.id
     await update_user_activity(user_id)
+    
+    # Проверка регистрации
+    if not await check_user_registered(user_id):
+        await update.message.reply_text("❌ Сначала заполните анкету: /start")
+        return
     
     if not context.args:
         await update.message.reply_text(
@@ -421,6 +466,7 @@ async def water_command(update: Update, context: CallbackContext):
         }
         await save_progress_to_db(user_id, progress_data)
         
+        # Сохраняем в Google Sheets
         report_data = {
             'date': datetime.now().strftime("%Y-%m-%d"),
             'water_intake': water
