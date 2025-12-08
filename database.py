@@ -11,6 +11,7 @@ from asyncpg import Connection, Record
 
 from config import DATABASE_URL, logger, QUESTIONS, POSTGRESQL_AVAILABLE
 
+# Глобальный пул подключений для эффективности
 _connection_pool = None
 
 async def get_connection_pool():
@@ -173,6 +174,7 @@ async def init_database():
                 )
             ''')
             
+            # Создаем индексы для улучшения производительности
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_questionnaire_user_id ON questionnaire_answers(user_id)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_progress_user_date ON user_progress(user_id, progress_date)')
@@ -250,8 +252,9 @@ async def save_questionnaire_answer(user_id: int, question_number: int, question
         async with get_db_connection() as conn:
             answer_date = datetime.now()
             
+            # Получаем текст вопроса из конфига, если не передан
             if not question_text and question_number < len(QUESTIONS):
-                question_text = QUESTIONS[question_number][:500]  # Обрезаем длинные вопросы
+                question_text = QUESTIONS[question_number]["text"][:500] if question_number < len(QUESTIONS) else ""
             
             await conn.execute('''INSERT INTO questionnaire_answers 
                              (user_id, question_number, question_text, answer_text, answer_date) 
@@ -275,6 +278,7 @@ async def save_message(user_id: int, message_text: str, direction: str):
         async with get_db_connection() as conn:
             created_at = datetime.now()
             
+            # Определяем тип сообщения
             message_type = 'text'
             if len(message_text) > 1000:
                 message_type = 'long_text'
@@ -441,6 +445,7 @@ async def get_user_activity_streak(user_id: int) -> int:
             if not dates:
                 return 0
             
+            # Сортируем по убыванию и проверяем последовательность
             dates.sort(reverse=True)
             streak = 0
             today = datetime.now().date()
@@ -503,14 +508,17 @@ async def get_user_level_info(user_id: int) -> Dict[str, Any]:
             next_level_points = 50
             points_to_next = 50
             
+            # Исправленная логика определения уровня
             sorted_points = sorted(level_names.keys())
             for i, points in enumerate(sorted_points):
                 if level_points >= points:
                     current_level = level_names[points]
+                    # Если есть следующий уровень
                     if i < len(sorted_points) - 1:
                         next_level_points = sorted_points[i + 1]
                         points_to_next = next_level_points - level_points
                     else:
+                        # Достигнут максимальный уровень
                         next_level_points = points
                         points_to_next = 0
                 else:
@@ -533,6 +541,7 @@ async def get_favorite_ritual(user_id: int) -> str:
     
     try:
         async with get_db_connection() as conn:
+            # Используем номер вопроса из анкеты для ритуалов
             result = await conn.fetchrow(
                 "SELECT answer_text FROM questionnaire_answers WHERE user_id = $1 AND question_number = 32", 
                 user_id
@@ -600,6 +609,7 @@ async def add_reminder_to_db(user_id: int, reminder_data: Dict[str, Any]) -> boo
     
     try:
         async with get_db_connection() as conn:
+            # 🔧 ОБРАБОТКА ОТНОСИТЕЛЬНЫХ НАПОМИНАНИЙ
             if reminder_data.get('type') == 'once' and 'delay_minutes' in reminder_data:
                 # Для относительных напоминаний вычисляем точное время
                 reminder_time = (datetime.now() + timedelta(minutes=reminder_data['delay_minutes'])).strftime("%H:%M")
@@ -668,6 +678,7 @@ async def delete_reminder_from_db(reminder_id: int) -> bool:
         logger.error(f"❌ Ошибка удаления напоминания: {e}")
         return False
 
+# Асинхронная инициализация БД при старте
 async def initialize_database():
     """Асинхронно инициализирует базу данных при старте приложения"""
     if POSTGRESQL_AVAILABLE:
