@@ -10,6 +10,7 @@ from database import (
 )
 from services.google_sheets import save_client_to_sheets
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /start - ВСЕГДА начинает анкету заново"""
     try:
@@ -18,6 +19,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         
         logger.info(f"🎯 НОВАЯ АНКЕТА /start пользователем {user_id} ({user.first_name})")
         
+        # ВСЕГДА начинаем новую анкету - очищаем все предыдущие данные
         context.user_data.clear()
         
         try:
@@ -37,6 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=reply_markup
         )
         
+        # Инициализируем данные для НОВОЙ анкеты
         context.user_data['current_question'] = -1
         context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
@@ -52,6 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "❌ Произошла ошибка при запуске. Пожалуйста, попробуйте еще раз или обратитесь к администратору."
         )
         return ConversationHandler.END
+
 
 async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик выбора пола ассистента"""
@@ -104,6 +108,7 @@ async def gender_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return ConversationHandler.END
 
+
 async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик подтверждения готовности начать анкету"""
     try:
@@ -112,11 +117,13 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"🔍 Пользователь {user_id} подтвердил начало анкеты: {answer_text}")
         
+        # ВСЕГДА начинаем анкету с ПЕРВОГО вопроса
         context.user_data['current_question'] = 0
         context.user_data['answers'] = {}
         context.user_data['questionnaire_started'] = True
         
-        await update.message.reply_text(QUESTIONS[0])
+        # Отправляем ПЕРВЫЙ вопрос (БРАТЬ ТЕКСТ ВОПРОСА!)
+        await update.message.reply_text(QUESTIONS[0]["text"])
         
         logger.info(f"🔁 Начинаем анкету с вопроса 0, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
         return QUESTIONNAIRE
@@ -128,12 +135,14 @@ async def handle_ready_confirmation(update: Update, context: ContextTypes.DEFAUL
         )
         return ConversationHandler.END
 
+
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик ответов на вопросы анкеты"""
     try:
         user_id = update.effective_user.id
         answer_text = update.message.text
         
+        # Проверяем что анкета действительно начата
         if 'questionnaire_started' not in context.user_data:
             logger.error(f"❌ Анкета не начата для пользователя {user_id}")
             await update.message.reply_text("❌ Что-то пошло не так. Пожалуйста, начните анкету заново с /start")
@@ -142,21 +151,31 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         current_question = context.user_data.get('current_question', 0)
         logger.info(f"🔍 Обрабатываем вопрос #{current_question}: {answer_text[:50]}...")
         
+        # 🔴🔴🔴 ИСПРАВЛЕНИЕ КРИТИЧЕСКОЙ ОШИБКИ 🔴🔴🔴
+        # Берем текст вопроса из словаря, а не весь словарь
+        question_text = QUESTIONS[current_question]["text"] if current_question < len(QUESTIONS) else "Вопрос"
+        
         try:
-            await save_questionnaire_answer(user_id, current_question, QUESTIONS[current_question], answer_text)
+            # ✅ ПРАВИЛЬНО: передаем текст вопроса, а не словарь
+            await save_questionnaire_answer(user_id, current_question, question_text, answer_text)
             context.user_data['answers'][current_question] = answer_text
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения ответа пользователя {user_id}: {e}")
+            # Продолжаем, так как ответ сохранен в context.user_data
         
+        # Переходим к следующему вопросу
         next_question = current_question + 1
         
         if next_question < len(QUESTIONS):
+            # Отправляем следующий вопрос (БРАТЬ ТЕКСТ ВОПРОСА!)
             context.user_data['current_question'] = next_question
-            await update.message.reply_text(QUESTIONS[next_question])
+            next_question_text = QUESTIONS[next_question]["text"]
+            await update.message.reply_text(next_question_text)
             
             logger.info(f"🔁 Переходим к вопросу {next_question}, возвращаем состояние QUESTIONNAIRE: {QUESTIONNAIRE}")
             return QUESTIONNAIRE
         else:
+            # Анкета завершена
             logger.info(f"✅ Анкета завершена для пользователя {user_id}")
             return await finish_questionnaire(update, context)
     
@@ -166,6 +185,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "❌ Произошла ошибка при обработке ответа. Пожалуйста, попробуйте еще раз или начните заново с /start"
         )
         return ConversationHandler.END
+
 
 async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Завершает анкету и отправляет данные"""
@@ -196,17 +216,20 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             'assistant_name': assistant_name
         }
         
-        for i, question in enumerate(QUESTIONS):
+        # Сохраняем ответы с номерами вопросов
+        for i, question_dict in enumerate(QUESTIONS):
             answer = context.user_data['answers'].get(i, '❌ Нет ответа')
-            user_data[f'question_{i+1}'] = answer
+            # Сохраняем текст вопроса и ответ
+            user_data[f'question_{i+1}_text'] = question_dict["text"]
+            user_data[f'question_{i+1}_answer'] = answer
         
         try:
             save_client_to_sheets(user_data)
             logger.info(f"✅ Данные анкеты {questionnaire_id} сохранены в Google Sheets")
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения в Google Sheets: {e}")
-        
 
+        # Формируем анкету для администратора
         questionnaire = f"📋 Новая анкета от пользователя:\n\n"
         questionnaire += f"👤 ID: {user.id}\n"
         questionnaire += f"📛 Имя: {user.first_name}\n"
@@ -220,13 +243,18 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         
         questionnaire += "📝 Ответы на вопросы:\n\n"
         
-        for i, question in enumerate(QUESTIONS):
+        # ✅ ПРАВИЛЬНО: берем текст вопроса из словаря
+        for i, question_dict in enumerate(QUESTIONS):
             answer = context.user_data['answers'].get(i, '❌ Нет ответа')
+            question_text = question_dict["text"]
             # Обрезаем длинные ответы для читабельности
             truncated_answer = answer[:500] + "..." if len(answer) > 500 else answer
-            questionnaire += f"❓ {i+1}. {question}:\n"
+            # Обрезаем текст вопроса если слишком длинный
+            truncated_question = question_text[:200] + "..." if len(question_text) > 200 else question_text
+            questionnaire += f"❓ {i+1}. {truncated_question}:\n"
             questionnaire += f"💬 {truncated_answer}\n\n"
         
+        # Отправляем админу с обработкой ошибок
         max_length = 4096
         if len(questionnaire) > max_length:
             parts = [questionnaire[i:i+max_length] for i in range(0, len(questionnaire), max_length)]
@@ -243,6 +271,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки анкеты: {e}")
         
+        # Отправляем кнопки действий администратору
         try:
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Ответить пользователю", callback_data=f"reply_{user.id}")],
@@ -260,6 +289,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.error(f"❌ Ошибка отправки кнопок админу: {e}")
         
+        # Сообщение пользователю с меню
         keyboard = [
             ['📊 Прогресс', '👤 Профиль'],
             ['📋 План на сегодня', '🔔 Мои напоминания'],
@@ -278,6 +308,7 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=reply_markup
         )
         
+        # Очищаем данные анкеты, но сохраняем настройки ассистента
         keys_to_keep = ['assistant_name', 'assistant_gender', 'greeting_emoji']
         preserved_data = {k: context.user_data.get(k) for k in keys_to_keep if k in context.user_data}
         context.user_data.clear()
@@ -294,11 +325,13 @@ async def finish_questionnaire(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ConversationHandler.END
 
+
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Отменяет текущий диалог и очищает данные"""
     try:
         user_id = update.effective_user.id
         
+        # Очищаем данные анкеты, но сохраняем настройки ассистента
         keys_to_keep = ['assistant_name', 'assistant_gender', 'greeting_emoji']
         preserved_data = {k: context.user_data.get(k) for k in keys_to_keep if k in context.user_data}
         context.user_data.clear()
