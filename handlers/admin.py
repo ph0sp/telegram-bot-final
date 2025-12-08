@@ -1,248 +1,495 @@
 import logging
 from datetime import datetime
+from typing import Dict, Any, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackContext, ConversationHandler, MessageHandler, filters
 
 from config import YOUR_CHAT_ID, logger, ADD_PLAN_USER, ADD_PLAN_DATE, ADD_PLAN_CONTENT
-from database import get_db_connection, save_user_plan_to_db
+from database import get_connection_pool, save_user_plan_to_db, update_user_activity
 from services.google_sheets import save_daily_plan_to_sheets, parse_structured_plan
 
-# Оставляем логгер на всякий случай, если он используется
-logger = logging.getLogger(__name__)
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    return str(user_id) == YOUR_CHAT_ID
+
 
 async def admin_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает процесс добавления плана (только для администратора)"""
-    if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
         return ConversationHandler.END
     
+    await update_user_activity(user_id)
     await update.message.reply_text(
-        "📋 ДОБАВЛЕНИЕ ПЕРСОНАЛЬНОГО ПЛАНА\n\n"
-        "Введите ID пользователя:"
+        "📋 **ДОБАВЛЕНИЕ ПЕРСОНАЛЬНОГО ПЛАНА**\n\n"
+        "Введите ID пользователя (число):"
     )
     return ADD_PLAN_USER
 
+
 async def add_plan_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает ID пользователя для добавления плана"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return ConversationHandler.END
+    
     try:
-        user_id = int(update.message.text)
-        context.user_data['plan_user_id'] = user_id
+        target_user_id = int(update.message.text.strip())
+        context.user_data['plan_user_id'] = target_user_id
         
-        try:
-            async with get_db_connection() as conn:
-                user_info = await conn.fetchrow(
-                    "SELECT first_name FROM clients WHERE user_id = $1", 
-                    user_id
-                )
-                if not user_info:
-                    await update.message.reply_text(
-                        f"❌ Пользователь с ID {user_id} не найден.\n"
-                        "Проверьте ID и попробуйте снова:"
-                    )
-                    return ADD_PLAN_USER
-                
-                context.user_data['user_name'] = user_info['first_name']
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка проверки пользователя {user_id}: {e}")
-            await update.message.reply_text(
-                f"❌ Ошибка при проверке пользователя. Попробуйте снова:"
+        # Проверяем существование пользователя
+        pool = await get_connection_pool()
+        if not pool:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных. Попробуйте позже.")
+            return ConversationHandler.END
+        
+        async with pool.acquire() as conn:
+            user_info = await conn.fetchrow(
+                "SELECT user_id, first_name, username FROM clients WHERE user_id = $1", 
+                target_user_id
             )
-            return ADD_PLAN_USER
-        
-        await update.message.reply_text(
-            f"👤 Пользователь: {user_info['first_name']} (ID: {user_id})\n\n"
-            "Введите дату для плана (формат: ГГГГ-ММ-ДД):"
-        )
-        return ADD_PLAN_DATE
-        
+            
+            if not user_info:
+                await update.message.reply_text(
+                    f"❌ Пользователь с ID {target_user_id} не найден.\n\n"
+                    "Проверьте ID и попробуйте снова:"
+                )
+                return ADD_PLAN_USER
+            
+            context.user_data['user_name'] = user_info['first_name']
+            context.user_data['user_username'] = user_info['username'] or 'без username'
+            
+            await update.message.reply_text(
+                f"✅ **Пользователь найден:**\n"
+                f"👤 Имя: {user_info['first_name']}\n"
+                f"📱 Username: {user_info['username'] or 'не указан'}\n"
+                f"🆔 ID: {target_user_id}\n\n"
+                f"📅 Введите дату для плана (формат: ГГГГ-ММ-ДД):"
+            )
+            return ADD_PLAN_DATE
+            
     except ValueError:
         await update.message.reply_text(
-            "❌ ID пользователя должен быть числом.\n"
+            "❌ ID пользователя должен быть целым числом.\n\n"
             "Введите корректный ID:"
         )
         return ADD_PLAN_USER
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке пользователя: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке пользователя. Попробуйте снова:"
+        )
+        return ADD_PLAN_USER
+
 
 async def add_plan_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает дату для добавления плана"""
-    date_str = update.message.text
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return ConversationHandler.END
+    
+    date_str = update.message.text.strip()
     
     try:
+        # Проверяем корректность даты
         datetime.strptime(date_str, "%Y-%m-%d")
+        
+        # Проверяем, что дата не в прошлом (можно закомментировать, если нужно)
+        plan_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        
+        if plan_date < today:
+            await update.message.reply_text(
+                "⚠️ **Внимание:** Вы добавляете план на прошедшую дату.\n\n"
+                "Продолжить? (да/нет)"
+            )
+            context.user_data['waiting_date_confirmation'] = date_str
+            return ADD_PLAN_DATE
+        
         context.user_data['plan_date'] = date_str
         
         await update.message.reply_text(
-            f"📅 Дата: {date_str}\n\n"
-            "Теперь введите содержание плана.\n\n"
-            "💡 Вы можете использовать структурированный формат:\n"
+            f"📅 **Дата:** {date_str}\n\n"
+            "📝 Теперь введите содержание плана.\n\n"
+            "💡 **Рекомендуемый формат:**\n"
             "СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
             "- Задача 1\n"
-            "- Задача 2\n"
+            "- Задача 2\n\n"
             "КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
-            "- Срочная задача\n"
+            "- Срочная задача\n\n"
             "СОВЕТЫ АССИСТЕНТА:\n"
-            "- Ваш совет"
+            "- Ваш совет\n\n"
+            "💫 **Мотивационная цитата (опционально):**\n"
+            "Верь в себя!"
         )
         return ADD_PLAN_CONTENT
         
     except ValueError:
         await update.message.reply_text(
-            "❌ Неверный формат даты.\n"
-            "Используйте формат: ГГГГ-ММ-ДД\n"
+            "❌ Неверный формат даты.\n\n"
+            "Используйте формат: **ГГГГ-ММ-ДД**\n"
+            "Например: 2024-12-25\n\n"
             "Попробуйте снова:"
         )
         return ADD_PLAN_DATE
+    except Exception as e:
+        logger.error(f"❌ Ошибка при обработке даты: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке даты. Попробуйте снова:"
+        )
+        return ADD_PLAN_DATE
+
 
 async def add_plan_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает содержание плана и сохраняет его"""
-    plan_content = update.message.text
-    user_id = context.user_data['plan_user_id']
-    date_str = context.user_data['plan_date']
-    user_name = context.user_data['user_name']
+    user_id = update.effective_user.id
     
-    plan_data = parse_structured_plan(plan_content)
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return ConversationHandler.END
     
-    success = save_daily_plan_to_sheets(user_id, date_str, plan_data)
+    plan_content = update.message.text.strip()
+    target_user_id = context.user_data.get('plan_user_id')
+    date_str = context.user_data.get('plan_date')
+    user_name = context.user_data.get('user_name', 'Неизвестный')
     
-    if success:
-        await save_user_plan_to_db(user_id, {
+    if not target_user_id or not date_str:
+        await update.message.reply_text("❌ Ошибка: данные плана не найдены. Начните заново.")
+        return ConversationHandler.END
+    
+    try:
+        # Парсим структурированный план
+        plan_data = parse_structured_plan(plan_content)
+        
+        # Сохраняем в Google Sheets
+        success = save_daily_plan_to_sheets(target_user_id, date_str, plan_data)
+        
+        if not success:
+            await update.message.reply_text(
+                "❌ Ошибка при сохранении плана в Google Sheets.\n"
+                "Проверьте подключение и попробуйте снова."
+            )
+            return ConversationHandler.END
+        
+        # Подготавливаем данные для БД
+        db_plan_data = {
             'plan_date': date_str,
             'task1': plan_data.get('strategic_tasks', [''])[0] if plan_data.get('strategic_tasks') else '',
             'task2': plan_data.get('strategic_tasks', [''])[1] if len(plan_data.get('strategic_tasks', [])) > 1 else '',
             'task3': plan_data.get('strategic_tasks', [''])[2] if len(plan_data.get('strategic_tasks', [])) > 2 else '',
             'task4': plan_data.get('critical_tasks', [''])[0] if plan_data.get('critical_tasks') else '',
-            'advice': plan_data.get('advice', [''])[0] if plan_data.get('advice') else ''
-        })
+            'advice': plan_data.get('advice', [''])[0] if plan_data.get('advice') else '',
+            'motivation_quote': plan_data.get('motivation_quote', ''),
+            'priorities': plan_data.get('priorities', [''])[0] if plan_data.get('priorities') else ''
+        }
         
-        await update.message.reply_text(
-            f"✅ План успешно добавлен!\n\n"
-            f"👤 Пользователь: {user_name}\n"
-            f"📅 Дата: {date_str}\n"
-            f"📋 План сохранен в Google Sheets"
+        # Сохраняем в PostgreSQL
+        await save_user_plan_to_db(target_user_id, db_plan_data)
+        
+        # Формируем ответ администратору
+        response = (
+            f"✅ **План успешно добавлен!**\n\n"
+            f"👤 **Пользователь:** {user_name}\n"
+            f"🆔 **ID:** {target_user_id}\n"
+            f"📅 **Дата:** {date_str}\n"
+            f"📊 **Сохранено в:** Google Sheets и PostgreSQL\n\n"
         )
         
+        if plan_data.get('strategic_tasks'):
+            response += f"🎯 **Стратегические задачи:** {len(plan_data['strategic_tasks'])}\n"
+        if plan_data.get('critical_tasks'):
+            response += f"⚠️ **Критические задачи:** {len(plan_data['critical_tasks'])}\n"
+        if plan_data.get('advice'):
+            response += f"💡 **Советы:** {len(plan_data['advice'])}\n"
+        
+        await update.message.reply_text(response)
+        
+        # Пытаемся отправить уведомление пользователю
         try:
             await context.bot.send_message(
-                chat_id=user_id,
-                text=f"🎉 У вас новый персональный план на {date_str}!\n\n"
-                     f"Используйте команду /plan чтобы посмотреть его."
+                chat_id=target_user_id,
+                text=(
+                    f"🎉 **У вас новый персональный план!**\n\n"
+                    f"📅 На дату: {date_str}\n\n"
+                    f"💡 Используйте команду /plan чтобы посмотреть ваш план на сегодня.\n\n"
+                    f"✨ Удачи в выполнении задач!"
+                ),
+                parse_mode='Markdown'
             )
+            logger.info(f"✅ Уведомление отправлено пользователю {target_user_id}")
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось отправить уведомление пользователю {user_id}: {e}")
-            
-    else:
+            logger.warning(f"⚠️ Не удалось отправить уведомление пользователю {target_user_id}: {e}")
+            await update.message.reply_text(
+                f"ℹ️ Пользователь {user_name} не получил уведомление (возможно, заблокировал бота)."
+            )
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении плана: {e}")
         await update.message.reply_text(
-            "❌ Ошибка при сохранении плана.\n"
-            "Проверьте подключение к Google Sheets."
+            "❌ Произошла ошибка при сохранении плана. Проверьте формат данных и попробуйте снова."
         )
+    
+    # Очищаем временные данные
+    context.user_data.pop('plan_user_id', None)
+    context.user_data.pop('plan_date', None)
+    context.user_data.pop('user_name', None)
+    context.user_data.pop('user_username', None)
     
     return ConversationHandler.END
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Статистика для администратора (АСИНХРОННАЯ)"""
-    if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Статистика для администратора"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
         return
     
+    await update_user_activity(user_id)
+    
     try:
-        async with get_db_connection() as conn:
+        pool = await get_connection_pool()
+        if not pool:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        async with pool.acquire() as conn:
+            # Получаем статистику
             total_users = await conn.fetchval("SELECT COUNT(*) FROM clients")
             active_today = await conn.fetchval(
-                "SELECT COUNT(*) FROM clients WHERE DATE(last_activity) = CURRENT_DATE"
+                "SELECT COUNT(DISTINCT user_id) FROM user_messages WHERE DATE(created_at) = CURRENT_DATE"
             )
-            total_messages = await conn.fetchval(
-                "SELECT COUNT(*) FROM user_messages WHERE direction = 'incoming'"
-            )
-            total_answers = await conn.fetchval("SELECT COUNT(*) FROM questionnaire_answers")
+            total_messages = await conn.fetchval("SELECT COUNT(*) FROM user_messages")
+            total_answers = await conn.fetchval("SELECT COUNT(DISTINCT user_id) FROM questionnaire_answers")
             total_plans = await conn.fetchval("SELECT COUNT(*) FROM user_plans")
             
+            # Активные пользователи за последние 7 дней
+            active_week = await conn.fetchval("""
+                SELECT COUNT(DISTINCT user_id) 
+                FROM user_messages 
+                WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+            """)
+            
+            # Новые пользователи за последние 7 дней
+            new_users_week = await conn.fetchval("""
+                SELECT COUNT(*) 
+                FROM clients 
+                WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+            """)
+        
+        # Формируем статистику
+        stats_text = (
+            f"📊 **СТАТИСТИКА БОТА**\n\n"
+            f"👥 **Пользователи:**\n"
+            f"• Всего: {total_users}\n"
+            f"• Активных сегодня: {active_today}\n"
+            f"• Активных за неделю: {active_week}\n"
+            f"• Новых за неделю: {new_users_week}\n\n"
+            f"📨 **Сообщения:**\n"
+            f"• Всего: {total_messages}\n\n"
+            f"📝 **Анкеты:**\n"
+            f"• Заполненных: {total_answers}\n\n"
+            f"📋 **Планы:**\n"
+            f"• Создано: {total_plans}\n\n"
+        )
+        
+        # Проверяем Google Sheets
+        try:
+            from services.google_sheets import google_sheet
+            if google_sheet:
+                stats_text += "📊 **Google Sheets:** ✅ подключен\n"
+            else:
+                stats_text += "📊 **Google Sheets:** ⚠️ не доступен\n"
+        except:
+            stats_text += "📊 **Google Sheets:** ❌ ошибка проверки\n"
+        
+        stats_text += f"\n🔄 Последнее обновление: {datetime.now().strftime('%H:%M:%S')}"
+        
+        await update.message.reply_text(stats_text, parse_mode='Markdown')
+        
     except Exception as e:
         logger.error(f"❌ Ошибка получения статистики: {e}")
-        total_users = active_today = total_messages = total_answers = total_plans = 0
-    
-    stats_text = f"📊 Статистика бота:\n\n"
-    stats_text += f"👥 Всего пользователей: {total_users}\n"
-    stats_text += f"🟢 Активных сегодня: {active_today}\n"
-    stats_text += f"📨 Всего сообщений: {total_messages}\n"
-    stats_text += f"📝 Ответов в анкетах: {total_answers}\n"
-    stats_text += f"📋 Индивидуальных планов: {total_plans}\n\n"
-    
-    from services.google_sheets import google_sheet
-    if google_sheet:
-        stats_text += f"📊 Google Sheets: ✅ подключен\n"
-    else:
-        stats_text += f"📊 Google Sheets: ❌ не доступен\n"
-    
-    await update.message.reply_text(stats_text)
+        await update.message.reply_text(
+            "❌ Произошла ошибка при получении статистики. Попробуйте позже."
+        )
 
-async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список пользователей (АСИНХРОННАЯ)"""
-    if str(update.effective_user.id) != YOUR_CHAT_ID:
-        await update.message.reply_text("❌ У вас нет прав для этой команды.")
+
+async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает список пользователей"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
         return
     
+    await update_user_activity(user_id)
+    
     try:
-        async with get_db_connection() as conn:
-            users = await conn.fetch(
-                "SELECT user_id, username, first_name, last_activity FROM clients ORDER BY last_activity DESC LIMIT 20"
-            )
+        pool = await get_connection_pool()
+        if not pool:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных.")
+            return
+        
+        async with pool.acquire() as conn:
+            users = await conn.fetch("""
+                SELECT user_id, username, first_name, last_name, last_activity, created_at 
+                FROM clients 
+                ORDER BY last_activity DESC 
+                LIMIT 25
+            """)
+        
+        if not users:
+            await update.message.reply_text("📭 Пользователей не найдено.")
+            return
+        
+        users_text = "👥 **ПОСЛЕДНИЕ ПОЛЬЗОВАТЕЛИ**\n\n"
+        
+        for i, user in enumerate(users, 1):
+            user_id = user['user_id']
+            username = f"@{user['username']}" if user['username'] else "без username"
+            first_name = user['first_name'] or 'Без имени'
+            last_activity = user['last_activity'].strftime('%d.%m.%Y %H:%M') if user['last_activity'] else 'никогда'
+            
+            users_text += f"{i}. **{first_name}** ({username})\n"
+            users_text += f"   🆔 ID: `{user_id}`\n"
+            users_text += f"   📅 Активен: {last_activity}\n"
+            users_text += f"   📋 [Добавить план](/add_plan_{user_id})\n\n"
+        
+        users_text += (
+            "💡 **Команды:**\n"
+            "• /add_plan – добавить план\n"
+            "• /admin_stats – статистика\n"
+            "• /admin_users – список пользователей\n\n"
+            "📊 Всего пользователей: " + str(len(users))
+        )
+        
+        await update.message.reply_text(users_text, parse_mode='Markdown')
+        
     except Exception as e:
         logger.error(f"❌ Ошибка получения списка пользователей: {e}")
-        users = []
-    
-    if not users:
-        await update.message.reply_text("📭 Пользователей не найдено.")
-        return
-    
-    users_text = "👥 ПОСЛЕДНИЕ ПОЛЬЗОВАТЕЛИ:\n\n"
-    
-    for user in users:
-        user_id = user['user_id']
-        username = user['username']
-        first_name = user['first_name']
-        last_activity = user['last_activity']
-        
-        username_display = f"@{username}" if username else "без username"
-        users_text += f"🆔 {user_id} - {first_name} ({username_display})\n"
-        users_text += f"   📅 Активен: {last_activity}\n\n"
-    
-    users_text += "💡 Для добавления плана используйте: /add_plan"
-    
-    await update.message.reply_text(users_text)
+        await update.message.reply_text(
+            "❌ Произошла ошибка при получении списка пользователей. Попробуйте позже."
+        )
 
-async def button_callback(update: Update, context: CallbackContext):
+
+async def button_callback(update: Update, context: CallbackContext) -> None:
     """Обработчик нажатий на inline-кнопки"""
     query = update.callback_query
-    await query.answer()
+    user_id = update.effective_user.id
     
+    if not is_admin(user_id):
+        await query.answer("❌ У вас нет прав для этого действия.", show_alert=True)
+        return
+    
+    await query.answer()
     callback_data = query.data
     
-    if callback_data.startswith('reply_'):
-        user_id = callback_data.replace('reply_', '')
-        await query.edit_message_text(f"✍️ Ответ пользователю {user_id}. Используйте /send {user_id} <сообщение>")
-    
-    elif callback_data.startswith('view_questionnaire_'):
-        user_id = callback_data.replace('view_questionnaire_', '')
-        await query.edit_message_text(f"📋 Просмотр анкеты пользователя {user_id}. Функция в разработке.")
-    
-    elif callback_data.startswith('stats_'):
-        user_id = callback_data.replace('stats_', '')
-        await query.edit_message_text(f"📊 Статистика пользователя {user_id}. Функция в разработке.")
-    
-    elif callback_data.startswith('create_plan_'):
-        user_id = callback_data.replace('create_plan_', '')
-        await query.edit_message_text(f"📋 Создание плана для пользователя {user_id}. Используйте /add_plan")
-
-async def save_user_plan_to_db(user_id: int, plan_data: dict):
-    """АСИНХРОННО сохраняет план пользователя в PostgreSQL"""
     try:
-        async with get_db_connection() as conn:
-            await conn.execute('''
-                INSERT INTO user_plans (user_id, plan_date, task1, task2, task3, task4, advice, status, created_date)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ''', user_id, plan_data['plan_date'], plan_data['task1'], plan_data['task2'],
-               plan_data['task3'], plan_data['task4'], plan_data['advice'], 'active', datetime.now())
+        if callback_data.startswith('reply_'):
+            target_user_id = callback_data.replace('reply_', '')
+            await query.edit_message_text(
+                f"✍️ **Ответ пользователю**\n\n"
+                f"🆔 ID: `{target_user_id}`\n\n"
+                f"Используйте команду:\n"
+                f"`/send {target_user_id} ваше сообщение`",
+                parse_mode='Markdown'
+            )
+        
+        elif callback_data.startswith('view_questionnaire_'):
+            target_user_id = callback_data.replace('view_questionnaire_', '')
             
-            logger.info(f"✅ План пользователя {user_id} сохранен в БД")
+            pool = await get_connection_pool()
+            if pool:
+                async with pool.acquire() as conn:
+                    answers = await conn.fetch(
+                        "SELECT question_number, answer FROM questionnaire_answers WHERE user_id = $1 ORDER BY question_number",
+                        int(target_user_id)
+                    )
+                    
+                    if answers:
+                        answers_text = f"📋 **Анкета пользователя {target_user_id}**\n\n"
+                        for answer in answers:
+                            answers_text += f"Вопрос {answer['question_number']}: {answer['answer']}\n"
+                        
+                        await query.edit_message_text(answers_text[:4000])
+                    else:
+                        await query.edit_message_text(f"📭 У пользователя {target_user_id} нет данных анкеты.")
+            else:
+                await query.edit_message_text("❌ Ошибка подключения к базе данных.")
+        
+        elif callback_data.startswith('stats_'):
+            target_user_id = callback_data.replace('stats_', '')
+            
+            pool = await get_connection_pool()
+            if pool:
+                async with pool.acquire() as conn:
+                    # Получаем статистику пользователя
+                    user_info = await conn.fetchrow(
+                        "SELECT first_name, last_activity FROM clients WHERE user_id = $1",
+                        int(target_user_id)
+                    )
+                    
+                    message_count = await conn.fetchval(
+                        "SELECT COUNT(*) FROM user_messages WHERE user_id = $1",
+                        int(target_user_id)
+                    )
+                    
+                    completed_tasks = await conn.fetchval(
+                        "SELECT COUNT(*) FROM user_progress WHERE user_id = $1 AND completed = TRUE",
+                        int(target_user_id)
+                    )
+                    
+                    if user_info:
+                        stats_text = (
+                            f"📊 **Статистика пользователя**\n\n"
+                            f"👤 Имя: {user_info['first_name']}\n"
+                            f"🆔 ID: {target_user_id}\n"
+                            f"📅 Последняя активность: {user_info['last_activity'].strftime('%d.%m.%Y %H:%M')}\n"
+                            f"📨 Сообщений: {message_count}\n"
+                            f"✅ Выполнено задач: {completed_tasks}\n"
+                        )
+                        
+                        await query.edit_message_text(stats_text)
+                    else:
+                        await query.edit_message_text(f"❌ Пользователь {target_user_id} не найден.")
+            else:
+                await query.edit_message_text("❌ Ошибка подключения к базе данных.")
+        
+        elif callback_data.startswith('create_plan_'):
+            target_user_id = callback_data.replace('create_plan_', '')
+            await query.edit_message_text(
+                f"📋 **Создание плана для пользователя**\n\n"
+                f"🆔 ID: `{target_user_id}`\n\n"
+                f"Используйте команду:\n"
+                f"`/add_plan`\n\n"
+                f"Или нажмите /add_plan и следуйте инструкциям.",
+                parse_mode='Markdown'
+            )
+    
     except Exception as e:
-        logger.error(f"❌ Ошибка сохранения плана {user_id}: {e}")
+        logger.error(f"❌ Ошибка в button_callback: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при обработке запроса.")
+
+
+async def cancel_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отменяет процесс добавления плана"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        return ConversationHandler.END
+    
+    # Очищаем временные данные
+    context.user_data.pop('plan_user_id', None)
+    context.user_data.pop('plan_date', None)
+    context.user_data.pop('user_name', None)
+    context.user_data.pop('user_username', None)
+    
+    await update.message.reply_text("❌ Добавление плана отменено.")
+    return ConversationHandler.END
