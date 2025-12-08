@@ -689,3 +689,11 @@ async def initialize_database():
             logger.error("❌ Ошибка инициализации базы данных")
     else:
         logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
+
+async def close_connection_pool():
+    """Корректно закрывает пул подключений к БД."""
+    global _connection_pool
+    if _connection_pool:
+        await _connection_pool.close()
+        logger.info("✅ Пул подключений к PostgreSQL закрыт")
+        _connection_pool = None
