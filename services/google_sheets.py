@@ -2,16 +2,17 @@ import logging
 import json
 import gspread
 import asyncio
+import os
 from google.oauth2.service_account import Credentials
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import os
 
 from config import GOOGLE_SHEETS_ID, logger
 from database import get_db_connection
 
 logger = logging.getLogger(__name__)
 
+# Глобальная переменная для хранения подключения к Google Sheets
 google_sheet = None
 
 def init_google_sheets():
@@ -19,27 +20,42 @@ def init_google_sheets():
     global google_sheet
     
     try:
+        # Пытаемся загрузить credentials разными способами
         creds_dict = None
         
+        # Способ 1: Из переменной окружения
         from config import GOOGLE_CREDENTIALS_JSON
         if GOOGLE_CREDENTIALS_JSON:
             try:
+                # Проверяем, является ли уже словарем
                 if isinstance(GOOGLE_CREDENTIALS_JSON, dict):
                     creds_dict = GOOGLE_CREDENTIALS_JSON
                     logger.info("✅ Credentials загружены из переменной окружения (уже dict)")
                 else:
+                    # Пытаемся распарсить как JSON строку
                     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
                     logger.info("✅ Credentials загружены из переменной окружения (распарсена строка)")
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"⚠️ Не удалось распарсить GOOGLE_CREDENTIALS_JSON: {e}")
         
-        if not creds_dict and os.path.exists('/home/ubuntu/telegram-bot/creds.json'):
-            try:
-                with open('/home/ubuntu/telegram-bot/creds.json', 'r') as f:
-                    creds_dict = json.load(f)
-                logger.info("✅ Credentials загружены из файла creds.json")
-            except Exception as e:
-                logger.error(f"❌ Ошибка загрузки credentials из файла: {e}")
+        # Способ 2: Из файла (резервный вариант)
+        if not creds_dict:
+            # Пробуем несколько путей
+            possible_paths = [
+                'creds.json',
+                '/home/ubuntu/telegram-bot/creds.json',
+                os.path.join(os.path.dirname(__file__), 'creds.json'),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), 'creds.json')
+            ]
+            for path in possible_paths:
+                if os.path.exists(path):
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            creds_dict = json.load(f)
+                        logger.info(f"✅ Credentials загружены из файла {path}")
+                        break
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка загрузки credentials из файла {path}: {e}")
         
         if not creds_dict:
             logger.error("❌ Не удалось загрузить credentials ни из переменной окружения, ни из файла")
@@ -49,17 +65,22 @@ def init_google_sheets():
             logger.error("❌ GOOGLE_SHEETS_ID не настроен")
             return None
         
+        # Настраиваем scope
         scope = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
         
+        # Создаем credentials
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         
+        # Авторизуемся
         client = gspread.authorize(creds)
         
+        # Открываем таблицу
         sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         
+        # Создаем листы если их нет
         try:
             sheet.worksheet("клиенты_детали")
         except gspread.exceptions.WorksheetNotFound:
@@ -80,10 +101,10 @@ def init_google_sheets():
         try:
             sheet.worksheet("индивидуальные_планы_месяц")
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title="индивидуальные_планы_месяц", rows=1000, cols=40)
+            worksheet = sheet.add_worksheet(title="индивидуальные_планы_месяц", rows=1000, cols=37)
             headers = ["id_клиента", "telegram_username", "имя", "месяц"]
             for day in range(1, 32):
-                headers.append(f"{day} октября")
+                headers.append(f"день_{day}")
             headers.extend(["общие_комментарии_месяца", "последнее_обновление"])
             worksheet.append_row(headers)
         
@@ -138,18 +159,24 @@ def init_google_sheets():
         return sheet
     
     except Exception as e:
-        logger.error(f"❌ Ошибка инициализации Google Sheets: {e}")
+        logger.error(f"❌ Ошибка инициализации Google Sheets: {e}", exc_info=True)
         return None
 
+# Инициализируем Google Sheets при импорте модуля
 google_sheet = init_google_sheets()
 
 async def save_client_to_sheets(user_data: Dict[str, Any]):
     """АСИНХРОННО сохраняет клиента в Google Sheets"""
+    global google_sheet
+    if google_sheet is None:
+        google_sheet = init_google_sheets()
+    
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
     
     try:
+        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _sync_save_client_to_sheets, user_data)
         
@@ -165,6 +192,7 @@ def _sync_save_client_to_sheets(user_data: Dict[str, Any]):
     try:
         worksheet = google_sheet.worksheet("клиенты_детали")
         
+        # Ищем существующего клиента
         try:
             cell = worksheet.find(str(user_data['user_id']))
             row = cell.row
@@ -196,6 +224,7 @@ def _sync_save_client_to_sheets(user_data: Dict[str, Any]):
                 user_data.get('ближайшая_цель', '')
             ]])
         except Exception:
+            # Создаем новую запись
             worksheet.append_row([
                 user_data['user_id'],
                 user_data.get('telegram_username', ''),
@@ -235,35 +264,24 @@ def format_enhanced_plan(plan_data: Dict[str, Any]) -> str:
     plan_text = f"🏁 {plan_data.get('name', 'Индивидуальный план')}\n\n"
     plan_text += f"📝 {plan_data.get('description', '')}\n\n"
     
-    if plan_data.get('strategic_tasks'):
-        plan_text += "🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:\n"
-        for i, task in enumerate(plan_data['strategic_tasks'], 1):
-            plan_text += f"{i}️⃣ {task}\n"
-        plan_text += "\n"
+    sections_order = [
+        ('strategic_tasks', '🎯 СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:'),
+        ('critical_tasks', '⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:'),
+        ('priorities', '🎯 ПРИОРИТЕТЫ ДНЯ:'),
+        ('advice', '💡 СОВЕТЫ АССИСТЕНТА:'),
+        ('special_rituals', '🌟 СПЕЦИАЛЬНЫЕ РИТУАЛЫ:'),
+        ('time_blocks', '⏰ ВРЕМЕННЫЕ БЛОКИ:'),
+        ('resources', '📚 РЕСУРСЫ И МАТЕРИАЛЫ:'),
+        ('expected_results', '🎯 ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ:'),
+        ('reminders', '🔔 ДОПОЛНИТЕЛЬНЫЕ НАПОМИНАНИЯ:'),
+    ]
     
-    if plan_data.get('critical_tasks'):
-        plan_text += "⚠️ КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:\n"
-        for i, task in enumerate(plan_data['critical_tasks'], 1):
-            plan_text += f"🔴 {task}\n"
-        plan_text += "\n"
-    
-    if plan_data.get('priorities'):
-        plan_text += "🎯 ПРИОРИТЕТЫ ДНЯ:\n"
-        for priority in plan_data['priorities']:
-            plan_text += f"⭐ {priority}\n"
-        plan_text += "\n"
-    
-    if plan_data.get('time_blocks'):
-        plan_text += "⏰ ВРЕМЕННЫЕ БЛОКИ:\n"
-        for block in plan_data['time_blocks']:
-            plan_text += f"🕒 {block}\n"
-        plan_text += "\n"
-    
-    if plan_data.get('advice'):
-        plan_text += "💡 СОВЕТЫ АССИСТЕНТА:\n"
-        for advice in plan_data['advice']:
-            plan_text += f"💫 {advice}\n"
-        plan_text += "\n"
+    for key, header in sections_order:
+        if plan_data.get(key):
+            plan_text += f"{header}\n"
+            for item in plan_data[key]:
+                plan_text += f"- {item}\n"
+            plan_text += "\n"
     
     if plan_data.get('motivation_quote'):
         plan_text += f"💫 МОТИВАЦИОННАЯ ЦИТАТА:\n{plan_data['motivation_quote']}\n"
@@ -272,6 +290,10 @@ def format_enhanced_plan(plan_data: Dict[str, Any]) -> str:
 
 async def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any]):
     """АСИНХРОННО сохраняет ежедневный отчет в Google Sheets"""
+    global google_sheet
+    if google_sheet is None:
+        google_sheet = init_google_sheets()
+    
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
@@ -288,6 +310,7 @@ async def save_daily_report_to_sheets(user_id: int, report_data: Dict[str, Any])
             username = user_info['username'] if user_info['username'] else ""
             first_name = user_info['first_name'] if user_info['first_name'] else ""
         
+        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _sync_save_daily_report_to_sheets, user_id, username, first_name, report_data)
         
@@ -341,6 +364,10 @@ def _sync_save_daily_report_to_sheets(user_id: int, username: str, first_name: s
 
 async def get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
     """АСИНХРОННО получает план на день из Google Sheets"""
+    global google_sheet
+    if google_sheet is None:
+        google_sheet = init_google_sheets()
+    
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return {}
@@ -361,24 +388,40 @@ def _sync_get_daily_plan_from_sheets(user_id: int, date: str) -> Dict[str, Any]:
     try:
         worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
         
+        # Определяем месяц плана
+        plan_month = datetime.strptime(date, "%Y-%m-%d").strftime("%B %Y")
+        day = datetime.strptime(date, "%Y-%m-%d").day
+        
+        # Ищем строку пользователя с нужным месяцем
         try:
-            cell = worksheet.find(str(user_id))
-            row = cell.row
+            user_cells = worksheet.findall(str(user_id))
+            row = None
+            for cell in user_cells:
+                month_in_row = worksheet.cell(cell.row, 4).value
+                if month_in_row == plan_month:
+                    row = cell.row
+                    break
+            
+            if not row:
+                logger.warning(f"⚠️ Пользователь {user_id} не найден в Google Sheets для месяца {plan_month}")
+                return {}
         except Exception:
             logger.warning(f"⚠️ Пользователь {user_id} не найден в Google Sheets")
             return {}
         
+        # Получаем все данные строки
         row_data = worksheet.row_values(row)
         
-        day = datetime.strptime(date, "%Y-%m-%d").day
-        date_column_index = 4 + day - 1 
+        # Определяем колонку для нужного дня
+        date_column_index = 4 + day  # 4 базовые колонки + день
         
-        if date_column_index >= len(row_data):
-            logger.warning(f"⚠️ Для даты {date} нет данных в Google Sheets")
+        if date_column_index > len(row_data):
+            logger.warning(f"⚠️ Для дня {day} нет данных в Google Sheets")
             return {}
         
-        plan_text = row_data[date_column_index]
+        plan_text = row_data[date_column_index - 1]  # Индексация в списке с 0
         
+        # Парсим структурированный текст плана
         plan_data = parse_structured_plan(plan_text)
         
         return plan_data
@@ -413,48 +456,61 @@ def parse_structured_plan(plan_text: str) -> Dict[str, Any]:
         if not line:
             continue
             
-        if 'СТРАТЕГИЧЕСКИЕ ЗАДАЧИ:' in line:
+        # Определяем секции по ключевым словам
+        if 'СТРАТЕГИЧЕСКИЕ ЗАДАЧИ' in line:
             current_section = 'strategic_tasks'
             continue
-        elif 'КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ:' in line:
+        elif 'КРИТИЧЕСКИ ВАЖНЫЕ ЗАДАЧИ' in line:
             current_section = 'critical_tasks'
             continue
-        elif 'ПРИОРИТЕТЫ ДНЯ:' in line:
+        elif 'ПРИОРИТЕТЫ ДНЯ' in line:
             current_section = 'priorities'
             continue
-        elif 'СОВЕТЫ АССИСТЕНТА:' in line:
+        elif 'СОВЕТЫ АССИСТЕНТА' in line:
             current_section = 'advice'
             continue
-        elif 'СПЕЦИАЛЬНЫЕ РИТУАЛЫ:' in line:
+        elif 'СПЕЦИАЛЬНЫЕ РИТУАЛЫ' in line:
             current_section = 'special_rituals'
             continue
-        elif 'ВРЕМЕННЫЕ БЛОКИ:' in line:
+        elif 'ВРЕМЕННЫЕ БЛОКИ' in line:
             current_section = 'time_blocks'
             continue
-        elif 'РЕСУРСЫ И МАТЕРИАЛЫ:' in line:
+        elif 'РЕСУРСЫ И МАТЕРИАЛЫ' in line:
             current_section = 'resources'
             continue
-        elif 'ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ:' in line:
+        elif 'ОЖИДАЕМЫЕ РЕЗУЛЬТАТЫ' in line:
             current_section = 'expected_results'
             continue
-        elif 'ДОПОЛНИТЕЛЬНЫЕ НАПОМИНАНИЯ:' in line:
+        elif 'ДОПОЛНИТЕЛЬНЫЕ НАПОМИНАНИЯ' in line:
             current_section = 'reminders'
             continue
-        elif 'МОТИВАЦИОННАЯ ЦИТАТА:' in line:
+        elif 'МОТИВАЦИОННАЯ ЦИТАТА' in line:
             current_section = 'motivation_quote'
             continue
             
-        if current_section and line.startswith('- '):
-            content = line[2:].strip()
+        # Добавляем данные в текущую секцию
+        if current_section:
             if current_section == 'motivation_quote':
-                sections[current_section] = content
+                # Для мотивационной цитаты берем всю строку
+                sections[current_section] = line
             else:
-                sections[current_section].append(content)
+                # Для остальных секций ждем, что строка начинается с "- "
+                if line.startswith('- '):
+                    content = line[2:].strip()
+                    sections[current_section].append(content)
+                # Если строка не начинается с "- ", то возможно, это продолжение предыдущего элемента
+                elif sections[current_section] and current_section != 'motivation_quote':
+                    # Добавляем к последнему элементу
+                    sections[current_section][-1] += ' ' + line
     
     return sections
 
 async def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any]) -> bool:
     """АСИНХРОННО сохраняет план в Google Sheets"""
+    global google_sheet
+    if google_sheet is None:
+        google_sheet = init_google_sheets()
+    
     if not google_sheet:
         logger.warning("⚠️ Google Sheets не доступен")
         return False
@@ -463,12 +519,14 @@ async def save_daily_plan_to_sheets(user_id: int, date: str, plan: Dict[str, Any
         # Форматируем план в структурированный текст
         plan_text = format_enhanced_plan(plan)
         
+        # Асинхронно получаем информацию о пользователе если нужно
         async with get_db_connection() as conn:
             user_info = await conn.fetchrow("SELECT username, first_name FROM clients WHERE user_id = $1", user_id)
             
             username = user_info['username'] if user_info and user_info['username'] else ""
             first_name = user_info['first_name'] if user_info and user_info['first_name'] else ""
         
+        # Запускаем синхронную операцию в отдельном потоке
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _sync_save_daily_plan_to_sheets, user_id, username, first_name, date, plan_text)
         
@@ -483,28 +541,45 @@ def _sync_save_daily_plan_to_sheets(user_id: int, username: str, first_name: str
     try:
         worksheet = google_sheet.worksheet("индивидуальные_планы_месяц")
         
-        # Ищем пользователя
+        # Определяем месяц плана
+        plan_month = datetime.strptime(date, "%Y-%m-%d").strftime("%B %Y")
+        day = datetime.strptime(date, "%Y-%m-%d").day
+        
+        # Ищем строку пользователя с нужным месяцем
         try:
-            cell = worksheet.find(str(user_id))
-            row = cell.row
+            # Находим все ячейки с user_id
+            user_cells = worksheet.findall(str(user_id))
+            row = None
+            for cell in user_cells:
+                # Проверяем месяц в этой строке
+                month_in_row = worksheet.cell(cell.row, 4).value
+                if month_in_row == plan_month:
+                    row = cell.row
+                    break
+            
+            if not row:
+                # Если не нашли строку с нужным месяцем, создаем новую
+                new_row = [user_id, username, first_name, plan_month]
+                for _ in range(31):
+                    new_row.append("")
+                new_row.extend(["", datetime.now().strftime("%Y-%m-%d %H:%M")])
+                worksheet.append_row(new_row)
+                # Находим добавленную строку
+                cell = worksheet.find(str(user_id))
+                row = cell.row
         except Exception:
-            # Если пользователя нет, создаем новую строку
-            current_month = datetime.now().strftime("%B %Y")
-            new_row = [user_id, username, first_name, current_month]
-            # Заполняем пустыми значениями для всех дней
+            # Если пользователь не найден, создаем новую строку
+            new_row = [user_id, username, first_name, plan_month]
             for _ in range(31):
                 new_row.append("")
             new_row.extend(["", datetime.now().strftime("%Y-%m-%d %H:%M")])
-            
             worksheet.append_row(new_row)
-            
-            # Теперь находим добавленную строку
+            # Находим добавленную строку
             cell = worksheet.find(str(user_id))
             row = cell.row
         
-        # Определяем колонку для нужной даты
-        day = datetime.strptime(date, "%Y-%m-%d").day
-        date_column_index = 4 + day  # 4 базовые колонки + день месяца (индексация с 1)
+        # Определяем колонку для нужного дня
+        date_column_index = 4 + day  # 4 базовые колонки + день (индексация с 1)
         
         # Обновляем ячейку с планом
         worksheet.update_cell(row, date_column_index, plan_text)
