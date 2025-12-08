@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes, CallbackContext
 
@@ -9,14 +8,13 @@ from database import (
     update_user_activity, check_user_registered, save_progress_to_db,
     has_sufficient_data, get_user_activity_streak, get_user_main_goal,
     get_favorite_ritual, get_user_level_info, get_user_usage_days,
-    get_connection_pool 
+    get_connection_pool, save_completed_task
 )
 from services.google_sheets import (
     get_daily_plan_from_sheets, save_daily_report_to_sheets
 )
 
 logger = logging.getLogger(__name__)
-
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий план пользователя"""
@@ -71,7 +69,6 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         plan_text += f"💫 МОТИВАЦИЯ: {plan_data['motivation_quote']}\n"
     
     await update.message.reply_text(plan_text)
-
 
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает персонализированный прогресс"""
@@ -165,7 +162,6 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Ошибка получения прогресса для {user_id}: {e}")
             await update.message.reply_text("❌ Ошибка при получении статистики. Попробуйте позже.")
 
-
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает профиль пользователя"""
     user = update.effective_user
@@ -220,7 +216,6 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка получения профиля для {user_id}: {e}")
         await update.message.reply_text("❌ Ошибка при получении профиля. Попробуйте позже.")
 
-
 async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Объясняет систему очков"""
     help_text = (
@@ -242,7 +237,6 @@ async def points_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "• Не пропускайте дни для сохранения серии"
     )
     await update.message.reply_text(help_text)
-
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
@@ -282,7 +276,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(help_text)
 
-
 async def done_command(update: Update, context: CallbackContext):
     """Отмечает выполнение задачи"""
     user_id = update.effective_user.id
@@ -309,8 +302,8 @@ async def done_command(update: Update, context: CallbackContext):
         
         task_names = {1: "первую", 2: "вторую", 3: "третью", 4: "четвертую"}
         
-        # 🔴 ПРОБЛЕМА: задача не сохраняется в БД!
-        # Нужно добавить функцию для сохранения выполненных задач
+        # Сохраняем задачу в БД
+        await save_completed_task(user_id, task_number)
         
         await update.message.reply_text(
             f"✅ Отлично! Вы выполнили {task_names[task_number]} задачу!\n"
@@ -319,7 +312,6 @@ async def done_command(update: Update, context: CallbackContext):
         
     except ValueError:
         await update.message.reply_text("❌ Номер задачи должен быть числом")
-
 
 async def mood_command(update: Update, context: CallbackContext):
     """Оценка настроения"""
@@ -378,7 +370,6 @@ async def mood_command(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
 
-
 async def energy_command(update: Update, context: CallbackContext):
     """Оценка уровня энергии"""
     user_id = update.effective_user.id
@@ -435,7 +426,6 @@ async def energy_command(update: Update, context: CallbackContext):
         
     except ValueError:
         await update.message.reply_text("❌ Оценка должна быть числом от 1 до 10")
-
 
 async def water_command(update: Update, context: CallbackContext):
     """Отслеживание водного баланса"""
