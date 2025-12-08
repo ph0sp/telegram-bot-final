@@ -690,6 +690,41 @@ async def initialize_database():
     else:
         logger.warning("⚠️ Пропускаем инициализацию БД - PostgreSQL не доступен")
 
+async def save_completed_task(user_id: int, task_number: int, task_description: str = None):
+    """Сохраняет выполненную задачу в БД"""
+    if not POSTGRESQL_AVAILABLE:
+        logger.warning(f"⚠️ PostgreSQL не доступен, пропускаем сохранение задачи {user_id}")
+        return
+    
+    try:
+        async with get_db_connection() as conn:
+            today = datetime.now().date()
+            
+            # Проверяем есть ли запись за сегодня
+            record = await conn.fetchrow(
+                "SELECT tasks_completed FROM user_progress WHERE user_id = $1 AND progress_date = $2",
+                user_id, today
+            )
+            
+            if record:
+                # Обновляем существующую запись
+                current_tasks = record['tasks_completed'] or 0
+                new_tasks = current_tasks + 1
+                await conn.execute(
+                    "UPDATE user_progress SET tasks_completed = $1 WHERE user_id = $2 AND progress_date = $3",
+                    new_tasks, user_id, today
+                )
+            else:
+                # Создаем новую запись
+                await conn.execute(
+                    "INSERT INTO user_progress (user_id, progress_date, tasks_completed) VALUES ($1, $2, $3)",
+                    user_id, today, 1
+                )
+            
+            logger.info(f"✅ Задача {task_number} сохранена для пользователя {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения задачи {user_id}: {e}")
+
 async def close_connection_pool():
     """Корректно закрывает пул подключений к БД."""
     global _connection_pool
